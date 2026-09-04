@@ -1,0 +1,6 @@
+{
+  "name": "AWIS - Algeria Wildfire Intelligence System",
+  "description": "National AI-powered wildfire early warning, GIS prediction, alert fusion, and emergency response platform for Algeria (نظام الرصد والذكاء الوطني لمكافحة حرائق الغابات في الجزائر).",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
