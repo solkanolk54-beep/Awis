@@ -240,3 +240,40 @@ export interface CitizenFireReportSubmission {
   deviceInfo: string;
   status: 'pending' | 'correlated' | 'verified' | 'rejected';
 }
+
+// Tactical Drone Reconnaissance & Thermal/RGB Aerial Feeds
+export type DroneCameraMode = 'thermal' | 'rgb';
+export type DroneThermalPalette = 'ironbow' | 'white_hot' | 'black_hot' | 'rainbow';
+export type DroneFlightPattern = 'orbit' | 'sweep' | 'hover' | 'grid';
+
+export interface DroneTacticalAssessment {
+  maxHotspotTempC: number;
+  flameFrontTempC: number;
+  ambientTempC: number;
+  fireRadiativePowerMw: number;
+  spreadRateMMin: number;
+  intensityClass: 'Surface Low' | 'Surface High' | 'Crown Moderate' | 'Catastrophic Crown';
+  recommendedDropPoint: GeoCoordinates;
+  flameHeightMeters: number;
+  isothermActive: boolean;
+  deHazeActive: boolean;
+}
+
+export interface DroneMissionState {
+  droneId: string;
+  droneName: string;
+  model: string;
+  activeIncidentId: string;
+  cameraMode: DroneCameraMode;
+  thermalPalette: DroneThermalPalette;
+  flightPattern: DroneFlightPattern;
+  altitudeMeters: number;
+  headingDegrees: number;
+  speedKmH: number;
+  batteryPercent: number;
+  signalStrengthPercent: number;
+  zoomLevel: number;
+  gimbalPitch: number;
+  isLayerVisibleOnMap: boolean;
+  assessment: DroneTacticalAssessment;
+}

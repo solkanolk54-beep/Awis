@@ -13,33 +13,62 @@ import {
   Globe, 
   UserCheck, 
   Clock,
-  Sparkles
+  Sparkles,
+  Wifi,
+  WifiOff,
+  HardDrive,
+  Bell,
+  BellRing,
+  Camera
 } from 'lucide-react';
 import { Language, UserRole } from '../../types';
 import { translations } from '../../i18n/translations';
+import { OfflineCacheStats } from '../../services/offlineCacheService';
 
 interface HeaderProps {
   currentLang: Language;
   onLanguageChange: (lang: Language) => void;
-  currentRole: UserRole;
-  onRoleChange: (role: UserRole) => void;
-  activeTab: string;
-  onTabChange: (tab: string) => void;
-  onOpenSimulation: () => void;
-  isSimulating: boolean;
-  simulationStep: number;
+  currentRole?: UserRole;
+  onRoleChange?: (role: UserRole) => void;
+  activeTab?: string;
+  onTabChange?: (tab: string) => void;
+  onOpenSimulation?: () => void;
+  isSimulating?: boolean;
+  simulationStep?: number;
+  onOpenCitizenReport?: () => void;
+  onOpenFieldOps?: () => void;
+  onOpenAnalytics?: () => void;
+  onOpenPostFireReport?: () => void;
+  onOpenDroneSimulation?: () => void;
+  isOnline?: boolean;
+  isSimulatedOffline?: boolean;
+  onOpenOfflineManager?: () => void;
+  offlineStats?: OfflineCacheStats | null;
+  onOpenNotifications?: () => void;
+  notificationPermission?: NotificationPermission;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentLang,
   onLanguageChange,
-  currentRole,
-  onRoleChange,
-  activeTab,
-  onTabChange,
-  onOpenSimulation,
-  isSimulating,
-  simulationStep
+  currentRole = 'national_command',
+  onRoleChange = (_role: UserRole) => {},
+  activeTab = 'command',
+  onTabChange = (_tab: string) => {},
+  onOpenSimulation = () => {},
+  isSimulating = false,
+  simulationStep = 0,
+  onOpenCitizenReport,
+  onOpenFieldOps,
+  onOpenAnalytics,
+  onOpenPostFireReport,
+  onOpenDroneSimulation,
+  isOnline = true,
+  isSimulatedOffline = false,
+  onOpenOfflineManager,
+  offlineStats,
+  onOpenNotifications,
+  notificationPermission = 'default'
 }) => {
   const t = translations[currentLang];
   const [timeStr, setTimeStr] = useState('');
@@ -124,8 +153,71 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Global Controls: Role & Language */}
-        <div className="flex items-center gap-3">
+        {/* Global Controls: Role, Offline Status & Language */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Offline / Forest Cache Status Button */}
+          {onOpenOfflineManager && (
+            <button
+              onClick={onOpenOfflineManager}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                isOnline && !isSimulatedOffline
+                  ? 'bg-slate-900/90 border-slate-700/80 text-emerald-400 hover:border-emerald-500/50 hover:bg-slate-800'
+                  : 'bg-amber-950/80 border-amber-500 text-amber-300 animate-pulse shadow-lg shadow-amber-950/50'
+              }`}
+              title={isOnline && !isSimulatedOffline ? 'Cloud Synced - Click to Manage Offline Cache' : 'Offline Forest Mode Active - Click to Manage'}
+            >
+              {isOnline && !isSimulatedOffline ? (
+                <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+              )}
+              <span className="hidden md:inline">
+                {isOnline && !isSimulatedOffline 
+                  ? (currentLang === 'ar' ? 'متصل' : 'Online') 
+                  : (currentLang === 'ar' ? 'وضع الغابات (أوفلاين)' : 'Offline Forest')}
+              </span>
+              {offlineStats?.incidentsCount ? (
+                <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 hidden sm:inline">
+                  {offlineStats.incidentsCount} Hotspots
+                </span>
+              ) : null}
+              {offlineStats?.pendingQueuedReports ? (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-amber-500 text-black animate-bounce">
+                  {offlineStats.pendingQueuedReports}
+                </span>
+              ) : null}
+            </button>
+          )}
+
+          {/* Browser Push Notifications Button */}
+          {onOpenNotifications && (
+            <button
+              onClick={onOpenNotifications}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                notificationPermission === 'granted'
+                  ? 'bg-slate-900/90 border-slate-700/80 text-amber-300 hover:border-amber-500/50 hover:bg-slate-800'
+                  : 'bg-red-950/70 border-red-500/70 text-red-300 animate-pulse'
+              }`}
+              title={
+                notificationPermission === 'granted'
+                  ? (currentLang === 'ar' ? 'إشعارات الدفع في الخلفية مفعلة - انقر للإدارة' : 'Push Alerts Active - Click to Manage')
+                  : (currentLang === 'ar' ? 'تفعيل إشعارات الطوارئ في الخلفية' : 'Enable Emergency Push Alerts')
+              }
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden lg:inline">
+                {currentLang === 'ar' ? 'إشعارات الطوارئ' : 'Push Alerts'}
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  notificationPermission === 'granted'
+                    ? 'bg-emerald-400'
+                    : 'bg-red-400 animate-ping'
+                }`}
+              />
+            </button>
+          )}
+
           {/* Active Role Selector */}
           <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs text-slate-300">
             <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -219,7 +311,10 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onTabChange('citizen')}
+          onClick={() => {
+            onTabChange('citizen');
+            onOpenCitizenReport?.();
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'citizen'
               ? 'bg-amber-600/20 text-amber-300 border border-amber-500/40 font-semibold'
@@ -231,7 +326,10 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onTabChange('fieldOps')}
+          onClick={() => {
+            onTabChange('fieldOps');
+            onOpenFieldOps?.();
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'fieldOps'
               ? 'bg-slate-800 text-emerald-400 border border-emerald-500/30 font-semibold'
@@ -243,7 +341,10 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onTabChange('analytics')}
+          onClick={() => {
+            onTabChange('analytics');
+            onOpenAnalytics?.();
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'analytics'
               ? 'bg-slate-800 text-emerald-400 border border-emerald-500/30 font-semibold'
@@ -255,7 +356,10 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onTabChange('postFire')}
+          onClick={() => {
+            onTabChange('postFire');
+            onOpenPostFireReport?.();
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'postFire'
               ? 'bg-slate-800 text-emerald-400 border border-emerald-500/30 font-semibold'
@@ -265,6 +369,23 @@ export const Header: React.FC<HeaderProps> = ({
           <FileText className="w-3.5 h-3.5 text-slate-300" />
           <span>{t.navPostFire}</span>
         </button>
+
+        {onOpenDroneSimulation && (
+          <button
+            onClick={onOpenDroneSimulation}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-emerald-300 hover:bg-slate-800/60 border border-emerald-500/20 bg-emerald-950/30 ml-auto"
+            title="Airborne Drone Reconnaissance Cockpit & Dual Camera Simulator"
+          >
+            <Camera className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-semibold text-emerald-300">
+              {currentLang === 'ar' ? 'استطلاع الدرون (Recon)' : 'Drone Recon'}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              FLIR / RGB
+            </span>
+          </button>
+        )}
       </nav>
     </header>
   );

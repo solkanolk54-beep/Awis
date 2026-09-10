@@ -19,25 +19,35 @@ import {
 } from 'lucide-react';
 import { WildfireIncident, WaterPoint, Language } from '../../types';
 import { translations } from '../../i18n/translations';
+import { UserLivePosition, computeDistanceKm } from '../../services/liveGeolocationService';
+import { LiveWeatherData } from '../../services/liveWeatherService';
 
 interface FieldOpsModalProps {
   incident: WildfireIncident;
   waterPoints: WaterPoint[];
   onClose: () => void;
   currentLang: Language;
+  userPosition?: UserLivePosition | null;
+  liveWeather?: LiveWeatherData | null;
 }
 
 export const FieldOpsModal: React.FC<FieldOpsModalProps> = ({
   incident,
   waterPoints,
   onClose,
-  currentLang
+  currentLang,
+  userPosition,
+  liveWeather
 }) => {
   const t = translations[currentLang];
   const [isOffline, setIsOffline] = useState(false);
   const [fieldNote, setFieldNote] = useState('');
   const [sentReportsCount, setSentReportsCount] = useState(2);
   const [waterTankLevel, setWaterTankLevel] = useState(78); // percentage
+
+  const realDistanceKm = userPosition 
+    ? computeDistanceKm(userPosition, incident.coordinates)
+    : 1.8;
 
   const handleSendFieldUpdate = () => {
     if (!fieldNote.trim()) return;
@@ -89,20 +99,30 @@ export const FieldOpsModal: React.FC<FieldOpsModalProps> = ({
           {/* Mission Objective Card */}
           <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
             <div>
-              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">
+              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block flex items-center gap-1.5">
                 ASSIGNED TACTICAL MISSION
+                {userPosition && (
+                  <span className="text-[9px] text-sky-400 bg-sky-950 px-1.5 py-0.2 rounded border border-sky-800 font-mono">
+                    LIVE GPS FIX
+                  </span>
+                )}
               </span>
               <div className="text-sm font-bold text-white mt-0.5">
                 Establish Defensive Line along RN-77 / Protect Ait Bouyoucef Flank
               </div>
               <div className="text-[11px] text-slate-400 mt-0.5">
-                Incident: {incident.code} | Head wind: {incident.windSpeedKmH} km/h {incident.windDirectionCardinal}
+                Incident: {incident.code} | Live Wind: {liveWeather?.windSpeedKmH ?? incident.windSpeedKmH} km/h {liveWeather?.windDirectionCardinal ?? incident.windDirectionCardinal} | Temp: {liveWeather?.temperatureC ?? 39.5}°C
               </div>
             </div>
             <div className="text-right">
-              <span className="text-xs px-2 py-1 rounded bg-red-950 text-red-300 font-mono font-bold border border-red-800">
-                DIST: 1.8 KM
+              <span className="text-xs px-2.5 py-1 rounded bg-red-950 text-red-300 font-mono font-bold border border-red-800 block">
+                DIST: {realDistanceKm} KM
               </span>
+              {userPosition && (
+                <span className="text-[9px] text-slate-400 font-mono block mt-1">
+                  ±{userPosition.accuracyMeters}m GPS
+                </span>
+              )}
             </div>
           </div>
 

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { GeoCoordinates, Language } from '../../types';
 import { translations } from '../../i18n/translations';
+import { UserLivePosition, getLiveDevicePosition } from '../../services/liveGeolocationService';
 
 interface CitizenReportingModalProps {
   onClose: () => void;
@@ -27,17 +28,23 @@ interface CitizenReportingModalProps {
     deviceInfo: string;
   }) => void;
   currentLang: Language;
+  userPosition?: UserLivePosition | null;
 }
 
 export const CitizenReportingModal: React.FC<CitizenReportingModalProps> = ({
   onClose,
   onSubmitReport,
-  currentLang
+  currentLang,
+  userPosition
 }) => {
   const t = translations[currentLang];
 
-  const [coords, setCoords] = useState<GeoCoordinates>({ lat: 36.784, lng: 5.719 });
-  const [locationHint, setLocationHint] = useState('Texanna - Guerrouche road, near km 14');
+  const [coords, setCoords] = useState<GeoCoordinates>(
+    userPosition ? { lat: userPosition.lat, lng: userPosition.lng } : { lat: 36.784, lng: 5.719 }
+  );
+  const [locationHint, setLocationHint] = useState(
+    userPosition ? `Live GPS Device Fix (±${userPosition.accuracyMeters}m)` : 'Texanna - Guerrouche road, near km 14'
+  );
   const [smokeDirection, setSmokeDirection] = useState('NE');
   const [fireSize, setFireSize] = useState<'small' | 'medium' | 'large'>('medium');
   const [description, setDescription] = useState('');
@@ -46,26 +53,19 @@ export const CitizenReportingModal: React.FC<CitizenReportingModalProps> = ({
   );
   const [submitted, setSubmitted] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(userPosition?.accuracyMeters ?? null);
 
-  const handleAcquireGps = () => {
+  const handleAcquireGps = async () => {
     setIsLocating(true);
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setCoords({
-            lat: Number(pos.coords.latitude.toFixed(4)),
-            lng: Number(pos.coords.longitude.toFixed(4))
-          });
-          setIsLocating(false);
-        },
-        () => {
-          // Fallback realistic coords for Algeria
-          setCoords({ lat: 36.7825, lng: 5.7215 });
-          setIsLocating(false);
-        },
-        { timeout: 5000 }
-      );
-    } else {
+    try {
+      const pos = await getLiveDevicePosition();
+      setCoords({ lat: pos.lat, lng: pos.lng });
+      setGpsAccuracy(pos.accuracyMeters);
+      setLocationHint(currentLang === 'ar' ? `إحداثيات حية من الهاتف (دقة ±${pos.accuracyMeters}م)` : `Live Phone GPS (±${pos.accuracyMeters}m accuracy)`);
+    } catch {
+      // Fallback realistic coords for Algeria
+      setCoords({ lat: 36.7825, lng: 5.7215 });
+    } finally {
       setIsLocating(false);
     }
   };
@@ -139,7 +139,13 @@ export const CitizenReportingModal: React.FC<CitizenReportingModalProps> = ({
             <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold block flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-red-400" /> Automatic GPS Position
+                  <MapPin className="w-3.5 h-3.5 text-red-400" />
+                  {currentLang === 'ar' ? 'إحداثيات GPS المباشرة' : 'Automatic GPS Position'}
+                  {gpsAccuracy !== null && (
+                    <span className="text-emerald-400 font-mono text-[9px] bg-emerald-950 px-1.5 py-0.2 rounded border border-emerald-800">
+                      ±{gpsAccuracy}m
+                    </span>
+                  )}
                 </span>
                 <span className="font-mono text-emerald-300 font-bold text-xs">
                   {coords.lat}° N, {coords.lng}° E
@@ -151,7 +157,9 @@ export const CitizenReportingModal: React.FC<CitizenReportingModalProps> = ({
                 disabled={isLocating}
                 className="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-medium text-[11px] transition cursor-pointer"
               >
-                {isLocating ? 'Acquiring...' : 'Refresh GPS'}
+                {isLocating 
+                  ? (currentLang === 'ar' ? 'جاري التحديد...' : 'Acquiring...') 
+                  : (currentLang === 'ar' ? 'تحديث GPS الفعلي' : 'Refresh GPS')}
               </button>
             </div>
 

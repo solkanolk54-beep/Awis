@@ -14,7 +14,17 @@ import {
   Shield,
   Trees,
   Navigation,
-  Crosshair
+  Crosshair,
+  MapPin,
+  Locate,
+  RadioTower,
+  Sparkles,
+  WifiOff,
+  HardDrive,
+  Camera,
+  Target,
+  Activity,
+  ChevronRight
 } from 'lucide-react';
 import { 
   WildfireIncident, 
@@ -23,10 +33,15 @@ import {
   WatchtowerCamera, 
   EmergencyResource, 
   Language,
-  RiskLevel
+  RiskLevel,
+  DroneMissionState,
+  DroneCameraMode
 } from '../../types';
 import { ALGERIA_WILAYAS } from '../../data/algeriaData';
 import { translations } from '../../i18n/translations';
+import { UserLivePosition, computeDistanceKm } from '../../services/liveGeolocationService';
+import { LiveWeatherData } from '../../services/liveWeatherService';
+import { createInitialDroneMission, computeDroneTacticalAssessment } from '../../services/droneReconService';
 
 interface GISMapProps {
   incidents: WildfireIncident[];
@@ -38,6 +53,16 @@ interface GISMapProps {
   onSelectIncident: (inc: WildfireIncident) => void;
   onSelectForest: (forest: ForestZone) => void;
   currentLang: Language;
+  userPosition?: UserLivePosition | null;
+  onLocateUser?: () => void;
+  isLocating?: boolean;
+  liveWeather?: LiveWeatherData | null;
+  isOnline?: boolean;
+  isSimulatedOffline?: boolean;
+  onOpenOfflineManager?: () => void;
+  droneMission?: DroneMissionState;
+  onUpdateDroneMission?: (updated: Partial<DroneMissionState>) => void;
+  onOpenDroneSimulation?: (incident?: WildfireIncident) => void;
 }
 
 export const GISMap: React.FC<GISMapProps> = ({
@@ -49,9 +74,39 @@ export const GISMap: React.FC<GISMapProps> = ({
   selectedIncident,
   onSelectIncident,
   onSelectForest,
-  currentLang
+  currentLang,
+  userPosition,
+  onLocateUser,
+  isLocating = false,
+  liveWeather,
+  isOnline = true,
+  isSimulatedOffline = false,
+  onOpenOfflineManager,
+  droneMission,
+  onUpdateDroneMission,
+  onOpenDroneSimulation
 }) => {
   const t = translations[currentLang];
+
+  // Fallback drone mission state if not passed from parent
+  const [internalDroneMission, setInternalDroneMission] = useState<DroneMissionState>(() => 
+    createInitialDroneMission(selectedIncident || incidents[0])
+  );
+
+  const activeDroneMission = droneMission || internalDroneMission;
+  const updateDroneMissionHandler = (updated: Partial<DroneMissionState>) => {
+    if (onUpdateDroneMission) {
+      onUpdateDroneMission(updated);
+    } else {
+      setInternalDroneMission(prev => ({ ...prev, ...updated }));
+    }
+  };
+
+  // Find incident that drone is patrolling
+  const dronePatrolIncident = incidents.find(i => i.id === activeDroneMission.activeIncidentId) || selectedIncident || incidents[0];
+  const droneAssessment = useMemo(() => {
+    return dronePatrolIncident ? computeDroneTacticalAssessment(dronePatrolIncident) : activeDroneMission.assessment;
+  }, [dronePatrolIncident, activeDroneMission.assessment]);
 
   // Layer Visibility State
   const [layers, setLayers] = useState({
@@ -145,6 +200,19 @@ export const GISMap: React.FC<GISMapProps> = ({
     setPan({ x: -140, y: -40 });
   };
 
+  const handleCenterOnUser = () => {
+    if (userPosition) {
+      const pt = geoToSvg(userPosition.lat, userPosition.lng);
+      setZoom(2.4);
+      setPan({
+        x: 500 - pt.x * 2.4,
+        y: 325 - pt.y * 2.4
+      });
+    } else if (onLocateUser) {
+      onLocateUser();
+    }
+  };
+
   const toggleLayer = (layerKey: keyof typeof layers) => {
     setLayers((prev) => ({ ...prev, [layerKey]: !prev[layerKey] }));
   };
@@ -179,6 +247,42 @@ export const GISMap: React.FC<GISMapProps> = ({
           <span className="text-slate-400">ZONE: TELL ATLAS MARITIME</span>
         </div>
 
+        {/* Live GPS & Weather Telemetry Readout & Offline Status */}
+        <div className="pointer-events-auto flex items-center gap-2">
+          {(!isOnline || isSimulatedOffline) && (
+            <button
+              onClick={onOpenOfflineManager}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-950/90 border border-amber-500 text-amber-300 text-xs font-mono shadow-lg transition cursor-pointer animate-pulse"
+              title="Offline Forest Cache Mode Active - Click to Manage"
+            >
+              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+              <span>OFFLINE CACHE (100% SVG GIS)</span>
+            </button>
+          )}
+
+          {userPosition ? (
+            <button
+              onClick={handleCenterOnUser}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-950/80 border border-sky-500/50 text-sky-300 text-xs font-mono shadow-lg hover:bg-sky-900/60 transition cursor-pointer"
+              title="Click to Center on your Live GPS"
+            >
+              <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+              <Locate className="w-3.5 h-3.5 text-sky-400" />
+              <span>GPS: {userPosition.lat}°N, {userPosition.lng}°E</span>
+              <span className="text-[10px] text-sky-400/80">±{userPosition.accuracyMeters}m</span>
+            </button>
+          ) : (
+            <button
+              onClick={onLocateUser}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700 text-slate-300 text-xs shadow-lg hover:bg-slate-800 transition cursor-pointer"
+              title="Activate Live Device GPS"
+            >
+              <Locate className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin text-sky-400' : 'text-slate-400'}`} />
+              <span>{isLocating ? (currentLang === 'ar' ? 'جاري تحديد GPS...' : 'Locating...') : (currentLang === 'ar' ? 'تفعيل GPS الفعلي' : 'Enable Live GPS')}</span>
+            </button>
+          )}
+        </div>
+
         {/* Map Mode Buttons & Layer Control Toggle */}
         <div className="pointer-events-auto flex items-center gap-2">
           {/* Map Base Mode */}
@@ -200,6 +304,49 @@ export const GISMap: React.FC<GISMapProps> = ({
               className={`px-2.5 py-1 rounded transition ${mapMode === 'topographic' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
             >
               Topography
+            </button>
+          </div>
+
+          {/* Tactical Airborne Drone Reconnaissance Toolbar Pill */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              onClick={() => onOpenDroneSimulation?.(dronePatrolIncident)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-800 text-emerald-400 hover:bg-slate-700 font-bold transition cursor-pointer"
+              title={currentLang === 'ar' ? 'فتح محاكاة قمرة قيادة الدرون' : 'Open Tactical Drone Cockpit'}
+            >
+              <Camera className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{currentLang === 'ar' ? 'درون DZ-04' : 'UAV DZ-04'}</span>
+            </button>
+            <div className="h-4 w-px bg-slate-700 mx-1" />
+            <button
+              onClick={() => {
+                if (!layers.drones) toggleLayer('drones');
+                updateDroneMissionHandler({ cameraMode: 'thermal' });
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition cursor-pointer ${
+                layers.drones && activeDroneMission.cameraMode === 'thermal'
+                  ? 'bg-gradient-to-r from-red-600 to-amber-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={currentLang === 'ar' ? 'تفعيل طبقة الكاميرا الحرارية FLIR على الخريطة' : 'Display FLIR Thermal Feed Layer on Map'}
+            >
+              <Flame className="w-3 h-3 text-amber-300" />
+              <span>{currentLang === 'ar' ? 'حراري (FLIR)' : 'Thermal'}</span>
+            </button>
+            <button
+              onClick={() => {
+                if (!layers.drones) toggleLayer('drones');
+                updateDroneMissionHandler({ cameraMode: 'rgb' });
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition cursor-pointer ${
+                layers.drones && activeDroneMission.cameraMode === 'rgb'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={currentLang === 'ar' ? 'تفعيل طبقة الكاميرا البصرية RGB على الخريطة' : 'Display Optical RGB Feed Layer on Map'}
+            >
+              <Eye className="w-3 h-3 text-emerald-200" />
+              <span>RGB</span>
             </button>
           </div>
 
@@ -346,12 +493,41 @@ export const GISMap: React.FC<GISMapProps> = ({
                 className="rounded accent-emerald-500"
               />
             </label>
+
+            <label className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 cursor-pointer bg-slate-800/30">
+              <span className="flex items-center gap-2 text-slate-300">
+                <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="flex items-center gap-1.5">
+                  <span>{currentLang === 'ar' ? 'استطلاع الدرون (كاميرا حرارية/RGB)' : 'Drone Recon (Thermal/RGB Feed)'}</span>
+                  <span className={`text-[10px] px-1 py-0.2 rounded font-mono font-bold ${activeDroneMission.cameraMode === 'thermal' ? 'bg-red-950 text-red-400 border border-red-800/50' : 'bg-emerald-950 text-emerald-400 border border-emerald-800/50'}`}>
+                    {activeDroneMission.cameraMode === 'thermal' ? 'FLIR' : 'RGB'}
+                  </span>
+                </span>
+              </span>
+              <input 
+                type="checkbox" 
+                checked={layers.drones} 
+                onChange={() => toggleLayer('drones')} 
+                className="rounded accent-emerald-500"
+              />
+            </label>
           </div>
         </div>
       )}
 
       {/* Floating Zoom and Navigation Controls */}
       <div className="absolute bottom-6 right-4 z-30 flex flex-col gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-1 shadow-2xl">
+        <button
+          onClick={handleCenterOnUser}
+          className={`p-2 rounded-lg transition ${
+            userPosition 
+              ? 'bg-sky-500/20 text-sky-400 border border-sky-400/40 hover:bg-sky-500/30' 
+              : 'text-slate-300 hover:text-white hover:bg-slate-800'
+          }`}
+          title={userPosition ? (currentLang === 'ar' ? 'التركيز على موقعي الفعلي GPS' : 'Focus on Live GPS') : (currentLang === 'ar' ? 'تحديد موقعي الفعلي GPS' : 'Acquire Live GPS')}
+        >
+          <Locate className={`w-4 h-4 ${isLocating ? 'animate-spin text-sky-400' : userPosition ? 'text-sky-300' : ''}`} />
+        </button>
         <button
           onClick={() => handleZoom(1.25)}
           className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition"
@@ -432,6 +608,46 @@ export const GISMap: React.FC<GISMapProps> = ({
           <linearGradient id="cameraBeam" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
             <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+          </linearGradient>
+
+          {/* Drone Thermal FLIR Ironbow Gradient */}
+          <radialGradient id="droneThermalIronbow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+            <stop offset="18%" stopColor="#feb078" stopOpacity="0.9" />
+            <stop offset="42%" stopColor="#f1605d" stopOpacity="0.75" />
+            <stop offset="70%" stopColor="#721f81" stopOpacity="0.5" />
+            <stop offset="92%" stopColor="#000004" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#000004" stopOpacity="0" />
+          </radialGradient>
+
+          {/* Drone Thermal White-Hot Gradient */}
+          <radialGradient id="droneThermalWhiteHot" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+            <stop offset="35%" stopColor="#cbd5e1" stopOpacity="0.8" />
+            <stop offset="70%" stopColor="#475569" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
+          </radialGradient>
+
+          {/* Drone Optical RGB Canopy Gradient */}
+          <radialGradient id="droneRgbCanopy" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
+            <stop offset="22%" stopColor="#f97316" stopOpacity="0.65" />
+            <stop offset="50%" stopColor="#15803d" stopOpacity="0.55" />
+            <stop offset="85%" stopColor="#14532d" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#052e16" stopOpacity="0" />
+          </radialGradient>
+
+          {/* Drone Sensor Camera Beam FOV */}
+          <linearGradient id="droneCameraBeam" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#10b981" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0.05" />
+          </linearGradient>
+
+          {/* Drone Billowing Smoke Plume Gradient */}
+          <linearGradient id="droneSmokePlume" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="rgba(40, 40, 45, 0.75)" />
+            <stop offset="50%" stopColor="rgba(100, 100, 105, 0.45)" />
+            <stop offset="100%" stopColor="rgba(180, 185, 190, 0)" />
           </linearGradient>
         </defs>
 
@@ -757,8 +973,384 @@ export const GISMap: React.FC<GISMapProps> = ({
               })}
             </g>
           )}
+
+          {/* Tactical Airborne Drone Reconnaissance & Dual Camera (Thermal/RGB) Feed Layer */}
+          {layers.drones && activeDroneMission.isLayerVisibleOnMap && dronePatrolIncident && (() => {
+            const firePt = geoToSvg(dronePatrolIncident.coordinates.lat, dronePatrolIncident.coordinates.lng);
+            const headingRad = (((activeDroneMission.headingDegrees ?? 42) - 90) * Math.PI) / 180;
+            const orbitR = 54;
+            const dronePt = {
+              x: firePt.x + Math.cos(headingRad) * orbitR,
+              y: firePt.y + Math.sin(headingRad) * orbitR
+            };
+            const dropPt = activeDroneMission.assessment?.recommendedDropPoint
+              ? geoToSvg(activeDroneMission.assessment.recommendedDropPoint.lat, activeDroneMission.assessment.recommendedDropPoint.lng)
+              : { x: firePt.x + 16, y: firePt.y - 12 };
+
+            const isThermal = activeDroneMission.cameraMode === 'thermal';
+
+            return (
+              <g id="drone-recon-tactical-overlay" className="cursor-pointer" onClick={() => onOpenDroneSimulation?.(dronePatrolIncident)}>
+                {/* 1. Camera FOV Sensor Projection Beam */}
+                <polygon
+                  points={`${dronePt.x},${dronePt.y} ${firePt.x - 38},${firePt.y - 26} ${firePt.x + 38},${firePt.y + 26}`}
+                  fill="url(#droneCameraBeam)"
+                  opacity="0.5"
+                  className="transition-all duration-300"
+                />
+
+                {/* 2. Drone Orbit Patrol Perimeter */}
+                <circle
+                  cx={firePt.x}
+                  cy={firePt.y}
+                  r={orbitR}
+                  fill="none"
+                  stroke="#10b981"
+                  strokeWidth="1.2"
+                  strokeDasharray="4 3"
+                  opacity="0.65"
+                />
+
+                {/* 3. Real-Time Camera Feed Ground Footprint Layer */}
+                {isThermal ? (
+                  /* --- THERMAL (FLIR) GROUND LAYER --- */
+                  <g id="drone-flir-thermal-feed">
+                    {/* Thermal Radiation Heat Footprint */}
+                    <ellipse
+                      cx={firePt.x}
+                      cy={firePt.y}
+                      rx="48"
+                      ry="34"
+                      fill="url(#droneThermalIronbow)"
+                      className="animate-pulse"
+                      opacity="0.9"
+                    />
+
+                    {/* High-Temperature Isotherm Boundary Contour */}
+                    <ellipse
+                      cx={firePt.x}
+                      cy={firePt.y}
+                      rx="38"
+                      ry="26"
+                      fill="none"
+                      stroke="#f43f5e"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 3"
+                      opacity="0.8"
+                    />
+
+                    {/* High-Temp Core Radiative Spot */}
+                    <circle
+                      cx={firePt.x}
+                      cy={firePt.y}
+                      r="9"
+                      fill="#ffffff"
+                      opacity="0.9"
+                    />
+
+                    {/* Water Drop Target Reticle (Canadair Air Support Guidance) */}
+                    <g transform={`translate(${dropPt.x}, ${dropPt.y})`}>
+                      <circle cx="0" cy="0" r="14" fill="none" stroke="#06b6d4" strokeWidth="1.6" strokeDasharray="3 2" className="animate-spin" style={{ transformOrigin: '0 0' }} />
+                      <circle cx="0" cy="0" r="3" fill="#06b6d4" />
+                      <line x1="-18" y1="0" x2="18" y2="0" stroke="#06b6d4" strokeWidth="1" />
+                      <line x1="0" y1="-18" x2="0" y2="18" stroke="#06b6d4" strokeWidth="1" />
+                      <rect x="-38" y="16" width="76" height="13" rx="3" fill="rgba(6, 182, 212, 0.95)" />
+                      <text x="0" y="25.5" fill="#082f49" fontSize="6.5" fontWeight="900" textAnchor="middle">
+                        💧 CANADAIR TARGET
+                      </text>
+                    </g>
+
+                    {/* Thermal Hotspot Temperature Badges on Map */}
+                    <g transform={`translate(${firePt.x + 8}, ${firePt.y - 34})`}>
+                      <rect x="0" y="-12" width="88" height="15" rx="3.5" fill="rgba(15, 23, 42, 0.95)" stroke="#ef4444" strokeWidth="1.2" />
+                      <text x="44" y="-2" fill="#fca5a5" fontSize="7" fontWeight="bold" textAnchor="middle">
+                        🔥 {droneAssessment.maxHotspotTempC}°C MAX CORE
+                      </text>
+                    </g>
+
+                    {/* Tactical Legend Stamp */}
+                    <g transform={`translate(${firePt.x - 52}, ${firePt.y + 42})`}>
+                      <rect x="0" y="-10" width="104" height="14" rx="3" fill="rgba(15, 23, 42, 0.9)" stroke="#10b981" strokeWidth="0.8" />
+                      <text x="52" y="-1" fill="#34d399" fontSize="6.5" fontWeight="bold" textAnchor="middle">
+                        FLIR THERMAL • FRP {droneAssessment.fireRadiativePowerMw} MW
+                      </text>
+                    </g>
+                  </g>
+                ) : (
+                  /* --- OPTICAL RGB GROUND LAYER --- */
+                  <g id="drone-optical-rgb-feed">
+                    {/* Natural Forest Canopy Ground Footprint */}
+                    <ellipse
+                      cx={firePt.x}
+                      cy={firePt.y}
+                      rx="48"
+                      ry="34"
+                      fill="url(#droneRgbCanopy)"
+                      opacity="0.88"
+                    />
+
+                    {/* Scorched Carbon Ash Scar Behind the Front */}
+                    <ellipse
+                      cx={firePt.x - 14}
+                      cy={firePt.y + 6}
+                      rx="26"
+                      ry="16"
+                      fill="#18181b"
+                      opacity="0.85"
+                    />
+
+                    {/* Billowing Smoke Plume Vector drifting in wind */}
+                    <path
+                      d={`M ${firePt.x - 10} ${firePt.y - 8} Q ${firePt.x + 25} ${firePt.y - 35} ${firePt.x + 65} ${firePt.y - 50} Q ${firePt.x + 40} ${firePt.y - 15} ${firePt.x + 10} ${firePt.y + 8} Z`}
+                      fill="url(#droneSmokePlume)"
+                    />
+
+                    {/* Glowing Active Flame Perimeter Line */}
+                    <path
+                      d={`M ${firePt.x - 24} ${firePt.y + 12} Q ${firePt.x} ${firePt.y - 6} ${firePt.x + 28} ${firePt.y - 18}`}
+                      fill="none"
+                      stroke="#f97316"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      className="animate-pulse"
+                    />
+
+                    {/* Optical Feed Legend Stamp */}
+                    <g transform={`translate(${firePt.x - 48}, ${firePt.y + 42})`}>
+                      <rect x="0" y="-10" width="96" height="14" rx="3" fill="rgba(15, 23, 42, 0.9)" stroke="#10b981" strokeWidth="0.8" />
+                      <text x="48" y="-1" fill="#38bdf8" fontSize="6.5" fontWeight="bold" textAnchor="middle">
+                        OPTICAL RGB • DE-HAZE ACTIVE
+                      </text>
+                    </g>
+                  </g>
+                )}
+
+                {/* 4. Active UAV Aircraft Icon in Orbit */}
+                <g transform={`translate(${dronePt.x}, ${dronePt.y}) rotate(${activeDroneMission.headingDegrees})`}>
+                  {/* Rotor Thruster Wake Waves */}
+                  <circle cx="0" cy="0" r="14" fill="none" stroke="#10b981" strokeWidth="0.8" opacity="0.4" />
+                  
+                  {/* Drone Airframe Graphic */}
+                  <path
+                    d="M 0 -9 L 7 6 L 0 3 L -7 6 Z"
+                    fill="#10b981"
+                    stroke="#ffffff"
+                    strokeWidth="1.2"
+                  />
+                  {/* Quad-Rotor Arms */}
+                  <line x1="-8" y1="-8" x2="8" y2="8" stroke="#10b981" strokeWidth="1.5" />
+                  <line x1="-8" y1="8" x2="8" y2="-8" stroke="#10b981" strokeWidth="1.5" />
+                  <circle cx="-8" cy="-8" r="2.2" fill="#34d399" />
+                  <circle cx="8" cy="8" r="2.2" fill="#34d399" />
+                  <circle cx="-8" cy="8" r="2.2" fill="#34d399" />
+                  <circle cx="8" cy="-8" r="2.2" fill="#34d399" />
+                  <circle cx="0" cy="0" r="2" fill="#ffffff" />
+                </g>
+
+                {/* Drone Callout Tag */}
+                <g transform={`translate(${dronePt.x}, ${dronePt.y - 15})`}>
+                  <rect x="-30" y="-11" width="60" height="13" rx="3" fill="rgba(15, 23, 42, 0.95)" stroke="#10b981" strokeWidth="1" />
+                  <text x="0" y="-2" fill="#10b981" fontSize="6.5" fontWeight="black" textAnchor="middle">
+                    DZ-04 ({activeDroneMission.altitudeMeters}m)
+                  </text>
+                </g>
+              </g>
+            );
+          })()}
+
+          {/* Real-Time User Device GPS Position Beacon & Tactical Vector Line */}
+          {userPosition && (
+            <g id="layer-live-user-gps" className="transition-all duration-500">
+              {(() => {
+                const userPt = geoToSvg(userPosition.lat, userPosition.lng);
+                const selectedIncPt = selectedIncident 
+                  ? geoToSvg(selectedIncident.coordinates.lat, selectedIncident.coordinates.lng) 
+                  : null;
+                const distanceToIncident = selectedIncident 
+                  ? computeDistanceKm(userPosition, selectedIncident.coordinates) 
+                  : null;
+
+                return (
+                  <>
+                    {/* Tactical Vector Line to Selected Incident */}
+                    {selectedIncPt && distanceToIncident !== null && (
+                      <g id="vector-user-to-fire">
+                        <line
+                          x1={userPt.x}
+                          y1={userPt.y}
+                          x2={selectedIncPt.x}
+                          y2={selectedIncPt.y}
+                          stroke="#38bdf8"
+                          strokeWidth="2"
+                          strokeDasharray="6 4"
+                          strokeOpacity="0.85"
+                        />
+                        {/* Midpoint Distance Badge */}
+                        <g transform={`translate(${(userPt.x + selectedIncPt.x) / 2}, ${(userPt.y + selectedIncPt.y) / 2})`}>
+                          <rect
+                            x="-38"
+                            y="-10"
+                            width="76"
+                            height="20"
+                            rx="10"
+                            fill="#0f172a"
+                            stroke="#38bdf8"
+                            strokeWidth="1.5"
+                          />
+                          <text
+                            x="0"
+                            y="3.5"
+                            fill="#38bdf8"
+                            fontSize="8"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                            fontFamily="monospace"
+                          >
+                            {distanceToIncident} km
+                          </text>
+                        </g>
+                      </g>
+                    )}
+
+                    {/* GPS Accuracy Radius Circle */}
+                    <circle
+                      cx={userPt.x}
+                      cy={userPt.y}
+                      r={Math.min(45, Math.max(16, userPosition.accuracyMeters / 5))}
+                      fill="rgba(56, 189, 248, 0.08)"
+                      stroke="#38bdf8"
+                      strokeWidth="1"
+                      strokeDasharray="3 3"
+                    />
+
+                    {/* Animated Radar Ping */}
+                    <circle
+                      cx={userPt.x}
+                      cy={userPt.y}
+                      r="22"
+                      fill="none"
+                      stroke="#38bdf8"
+                      strokeWidth="1.5"
+                      className="animate-ping"
+                      style={{ transformOrigin: `${userPt.x}px ${userPt.y}px` }}
+                    />
+
+                    {/* Outer Glow Halo */}
+                    <circle
+                      cx={userPt.x}
+                      cy={userPt.y}
+                      r="12"
+                      fill="#0284c7"
+                      fillOpacity="0.4"
+                    />
+
+                    {/* Central High-Intensity GPS Pin */}
+                    <circle
+                      cx={userPt.x}
+                      cy={userPt.y}
+                      r="6.5"
+                      fill="#38bdf8"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                    />
+                    <circle
+                      cx={userPt.x}
+                      cy={userPt.y}
+                      r="2.5"
+                      fill="#0369a1"
+                    />
+
+                    {/* Live GPS Identifier Tag */}
+                    <g transform={`translate(${userPt.x}, ${userPt.y - 16})`}>
+                      <rect
+                        x="-52"
+                        y="-14"
+                        width="104"
+                        height="18"
+                        rx="5"
+                        fill="rgba(15, 23, 42, 0.95)"
+                        stroke="#38bdf8"
+                        strokeWidth="1.2"
+                      />
+                      <text
+                        x="0"
+                        y="-2"
+                        fill="#38bdf8"
+                        fontSize="7.5"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                      >
+                        {currentLang === 'ar' ? '📍 موقعك الفعلي (Live GPS)' : '📍 My Location (Live GPS)'}
+                      </text>
+                    </g>
+                  </>
+                );
+              })()}
+            </g>
+          )}
         </g>
       </svg>
+
+      {/* Floating On-Map Tactical Drone HUD Card (Bottom-Left) */}
+      {layers.drones && activeDroneMission.isLayerVisibleOnMap && dronePatrolIncident && (
+        <div className="absolute bottom-6 left-4 z-30 flex items-center gap-3 bg-slate-950/90 backdrop-blur-md border border-slate-700/90 rounded-xl p-2 px-3 shadow-2xl text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-emerald-950/80 border border-emerald-500/50 flex items-center justify-center text-emerald-400">
+              <Camera className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-100">{activeDroneMission.droneId}</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-[10px] text-emerald-400 font-mono">LIVE FEED</span>
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2">
+                <span>ALT: {activeDroneMission.altitudeMeters}m</span>
+                <span>•</span>
+                <span className={activeDroneMission.cameraMode === 'thermal' ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                  {activeDroneMission.cameraMode === 'thermal' ? `🔥 ${droneAssessment.maxHotspotTempC}°C MAX` : '🌲 OPTICAL DE-HAZE'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-6 w-px bg-slate-800" />
+
+          {/* Quick Mode Toggle on Map */}
+          <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+            <button
+              onClick={() => updateDroneMissionHandler({ cameraMode: 'thermal' })}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 ${
+                activeDroneMission.cameraMode === 'thermal'
+                  ? 'bg-gradient-to-r from-red-600 to-amber-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Flame className="w-3 h-3 text-amber-300" />
+              <span>Thermal</span>
+            </button>
+            <button
+              onClick={() => updateDroneMissionHandler({ cameraMode: 'rgb' })}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 ${
+                activeDroneMission.cameraMode === 'rgb'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Eye className="w-3 h-3 text-emerald-300" />
+              <span>RGB</span>
+            </button>
+          </div>
+
+          <button
+            onClick={() => onOpenDroneSimulation?.(dronePatrolIncident)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow cursor-pointer ml-1"
+          >
+            <span>{currentLang === 'ar' ? 'القمرة كاملة' : 'Full Cockpit'}</span>
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

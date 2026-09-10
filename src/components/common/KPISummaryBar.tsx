@@ -13,11 +13,19 @@ import {
   Sparkles,
   SlidersHorizontal,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  RefreshCw,
+  RadioTower,
+  Gauge,
+  WifiOff,
+  HardDrive
 } from 'lucide-react';
 import { WildfireIncident, ForestZone, EmergencyResource, Language } from '../../types';
 import { translations } from '../../i18n/translations';
 import { MiniSparkline } from './MiniSparkline';
+import { LiveWeatherData } from '../../services/liveWeatherService';
+import { UserLivePosition } from '../../services/liveGeolocationService';
+import { OfflineCacheStats } from '../../services/offlineCacheService';
 import { 
   get24HourFireRiskTrend, 
   get24HourActiveFiresTrend, 
@@ -30,13 +38,29 @@ interface KPISummaryBarProps {
   forests: ForestZone[];
   resources: EmergencyResource[];
   currentLang: Language;
+  liveWeather?: LiveWeatherData | null;
+  isWeatherLoading?: boolean;
+  onRefreshWeather?: () => void;
+  userPosition?: UserLivePosition | null;
+  isOnline?: boolean;
+  isSimulatedOffline?: boolean;
+  onOpenOfflineManager?: () => void;
+  offlineStats?: OfflineCacheStats | null;
 }
 
 export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
   incidents,
   forests,
   resources,
-  currentLang
+  currentLang,
+  liveWeather,
+  isWeatherLoading = false,
+  onRefreshWeather,
+  userPosition,
+  isOnline = true,
+  isSimulatedOffline = false,
+  onOpenOfflineManager,
+  offlineStats
 }) => {
   const t = translations[currentLang];
 
@@ -74,24 +98,70 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
       className="w-full space-y-2.5"
       dir={currentLang === 'ar' ? 'rtl' : 'ltr'}
     >
+      {/* Tactical Offline Forest Operations Advisory Banner */}
+      {(!isOnline || isSimulatedOffline) && (
+        <div className="w-full bg-gradient-to-r from-amber-950 via-slate-900 to-amber-950/80 border-2 border-amber-500/80 rounded-xl px-3.5 py-2 flex flex-wrap items-center justify-between text-xs shadow-2xl gap-2 animate-in fade-in duration-300">
+          <div className="flex items-center gap-2.5 overflow-hidden flex-1 min-w-[280px]">
+            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-amber-500 text-black font-extrabold text-[10px] tracking-wider uppercase shrink-0 animate-pulse">
+              <WifiOff className="w-3.5 h-3.5 text-black" />
+              {currentLang === 'ar' ? 'وضع الغابات المنعزلة (أوفلاين نشط)' : 'OFFLINE FOREST MODE ACTIVE'}
+            </span>
+            <span className="text-amber-200 font-medium text-[11px] truncate">
+              {currentLang === 'ar'
+                ? 'تم فقدان الاتصال بالإنترنت في هذا القطاع. نظام الخرائط التفاعلي يعمل بكامل معالمه من الذاكرة المحلية (LocalStorage & ServiceWorker Cache).'
+                : 'No internet connection detected. GIS spatial layers, fire perimeters & water points are operating from Local Cache.'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono text-[11px] text-amber-300 shrink-0">
+            <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-emerald-300">
+              {offlineStats?.incidentsCount ?? incidents.length} Hotspots Cached
+            </span>
+            {onOpenOfflineManager && (
+              <button
+                onClick={onOpenOfflineManager}
+                className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-bold transition cursor-pointer"
+              >
+                {currentLang === 'ar' ? 'إدارة التخزين' : 'Manage Cache'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Real-Time Meteorological & Civil Protection Advisory Banner */}
-      <div className="w-full bg-gradient-to-r from-red-950 via-amber-950/80 to-slate-900 border border-red-800/60 rounded-xl px-3.5 py-1.5 flex items-center justify-between text-xs shadow-lg">
-        <div className="flex items-center gap-2.5 overflow-hidden">
+      <div className="w-full bg-gradient-to-r from-red-950 via-amber-950/80 to-slate-900 border border-red-800/60 rounded-xl px-3.5 py-1.5 flex flex-wrap items-center justify-between text-xs shadow-lg gap-2">
+        <div className="flex items-center gap-2.5 overflow-hidden flex-1 min-w-[280px]">
           <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-600 text-white font-extrabold text-[10px] tracking-wider uppercase shrink-0 animate-pulse">
             <AlertTriangle className="w-3 h-3" />
-            Météo-DZ SIROCCO ALERT
+            {liveWeather?.isRealTime ? 'MÉTÉO DIRECTE (LIVE API)' : 'MÉTÉO-DZ SIROCCO ALERT'}
           </span>
           <span className="text-slate-200 font-medium truncate text-[11px]">
             {currentLang === 'ar'
-              ? 'إنذار جوي برتقالي: موجة حر شديدة ورياح جنوبية جافة (الشهيلي) بسرعة تتجاوز 45 كم/سا عبر ولايات تيزي وزو، بجاية، جيجل، سكيكدة والطارف. مؤشر الجفاف في مستوى حرج.'
-              : 'CRITICAL WEATHER ADVISORY: Severe southerly Sirocco heatwave with gusts exceeding 45 km/h across Tizi Ouzou, Béjaïa, Jijel, Skikda & El Tarf. Fuel moisture < 12%.'}
+              ? (liveWeather?.isRealTime
+                  ? `بيانات الأرصاد الجوية اللحظية الحقيقية (Open-Meteo): رياح بسرعة ${liveWeather.windSpeedKmH} كم/سا باتجاه ${liveWeather.windDirectionCardinal}، حرارة ${liveWeather.temperatureC}°C ورطوبة ${liveWeather.humidityPercent}%. مؤشر FWI: ${liveWeather.fwiScore}/100.`
+                  : 'إنذار جوي برتقالي: موجة حر شديدة ورياح جنوبية جافة (الشهيلي) بسرعة تتجاوز 45 كم/سا عبر ولايات تيزي وزو، بجاية، جيجل، سكيكدة والطارف. مؤشر الجفاف في مستوى حرج.')
+              : (liveWeather?.isRealTime
+                  ? `Live Open-Meteo Station Telemetry: Wind ${liveWeather.windSpeedKmH} km/h ${liveWeather.windDirectionCardinal}, Temp ${liveWeather.temperatureC}°C, Humidity ${liveWeather.humidityPercent}%. FWI: ${liveWeather.fwiScore}/100.`
+                  : 'CRITICAL WEATHER ADVISORY: Severe southerly Sirocco heatwave with gusts exceeding 45 km/h across Tizi Ouzou, Béjaïa, Jijel, Skikda & El Tarf. Fuel moisture < 12%.')}
           </span>
         </div>
-        <div className="hidden sm:flex items-center gap-2 font-mono text-[11px] text-amber-300 shrink-0 ml-2">
+        <div className="flex items-center gap-2 font-mono text-[11px] text-amber-300 shrink-0">
           <Wind className="w-3.5 h-3.5 text-sky-400" />
-          <span>42 km/h NE</span>
+          <span>{liveWeather?.windSpeedKmH ?? 42} km/h {liveWeather?.windDirectionCardinal ?? 'NE'}</span>
           <span className="text-slate-600">|</span>
-          <span className="text-red-400 font-bold">40.5°C / 18% RH</span>
+          <span className="text-red-400 font-bold">{liveWeather?.temperatureC ?? 40.5}°C / {liveWeather?.humidityPercent ?? 18}% RH</span>
+          {onRefreshWeather && (
+            <button
+              onClick={onRefreshWeather}
+              disabled={isWeatherLoading}
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              title={currentLang === 'ar' ? 'تحديث بيانات الطقس الحية الآن' : 'Refresh live weather now'}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isWeatherLoading ? 'animate-spin text-amber-400' : ''}`} />
+            </button>
+          )}
         </div>
       </div>
 

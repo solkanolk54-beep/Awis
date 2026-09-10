@@ -12,7 +12,8 @@ import {
   ShieldAlert,
   Sparkles,
   Volume2,
-  VolumeX
+  VolumeX,
+  BellRing
 } from 'lucide-react';
 import { DetectionSignal, WildfireIncident, Language } from '../../types';
 import { translations } from '../../i18n/translations';
@@ -22,13 +23,17 @@ interface AlertFeedSidebarProps {
   incidents: WildfireIncident[];
   onSelectIncident: (incident: WildfireIncident) => void;
   currentLang: Language;
+  onOpenNotifications?: () => void;
+  notificationPermission?: NotificationPermission;
 }
 
 export const AlertFeedSidebar: React.FC<AlertFeedSidebarProps> = ({
   signals,
   incidents,
   onSelectIncident,
-  currentLang
+  currentLang,
+  onOpenNotifications,
+  notificationPermission = 'default'
 }) => {
   const t = translations[currentLang];
   const [sourceFilter, setSourceFilter] = useState<string>('all');
@@ -64,13 +69,32 @@ export const AlertFeedSidebar: React.FC<AlertFeedSidebarProps> = ({
             {filteredSignals.length} Active
           </span>
         </div>
-        <button
-          onClick={() => setSoundEnabled(!soundEnabled)}
-          className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          title={soundEnabled ? 'Mute Alert Chime' : 'Unmute Alert Chime'}
-        >
-          {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5" />}
-        </button>
+        <div className="flex items-center gap-1">
+          {onOpenNotifications && (
+            <button
+              onClick={onOpenNotifications}
+              className={`p-1.5 rounded transition cursor-pointer ${
+                notificationPermission === 'granted'
+                  ? 'text-amber-400 hover:text-white hover:bg-slate-800'
+                  : 'text-red-400 hover:text-white bg-red-950/40 border border-red-500/40 animate-pulse'
+              }`}
+              title={
+                notificationPermission === 'granted'
+                  ? 'Push Alerts Configured (Service Worker Active)'
+                  : 'Click to Enable Background Push Notifications'
+              }
+            >
+              <BellRing className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            title={soundEnabled ? 'Mute Alert Chime' : 'Unmute Alert Chime'}
+          >
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs */}

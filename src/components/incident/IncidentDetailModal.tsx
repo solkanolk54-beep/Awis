@@ -44,6 +44,7 @@ interface IncidentDetailModalProps {
   onDispatchResource: (incidentId: string, resourceId: string) => void;
   availableResources: EmergencyResource[];
   currentLang: Language;
+  onOpenDroneSimulation?: (incident: WildfireIncident) => void;
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
@@ -53,7 +54,8 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
   onRejectIncident,
   onDispatchResource,
   availableResources,
-  currentLang
+  currentLang,
+  onOpenDroneSimulation
 }) => {
   const t = translations[currentLang];
   const [activeTab, setActiveTab] = useState<'overview' | 'xai' | 'detection' | 'spread' | 'strategic-dispatch' | 'dispatch' | 'validation'>('overview');
@@ -102,6 +104,18 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              id="header-drone-recon-btn"
+              onClick={() => onOpenDroneSimulation?.(incident)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-950/40 transition cursor-pointer"
+              title="Open Tactical Drone Reconnaissance Simulator (FLIR/RGB)"
+            >
+              <Camera className="w-3.5 h-3.5 text-white" />
+              <span>{currentLang === 'ar' ? 'استطلاع الدرون' : 'Drone Recon'}</span>
+              <span className="px-1.5 py-0.2 rounded bg-black/30 text-emerald-200 text-[10px] font-mono font-bold">
+                FLIR/RGB
+              </span>
+            </button>
             <button
               id="header-ai-assisted-dispatch-btn"
               onClick={() => setActiveTab('strategic-dispatch')}
@@ -218,6 +232,65 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                   </div>
                   <div className="text-[11px] text-slate-400">
                     Initial front expanding
+                  </div>
+                </div>
+              </div>
+
+              {/* Tactical Airborne Drone Reconnaissance Card */}
+              <div 
+                id="overview-drone-recon-card"
+                className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-950/80 border border-emerald-500/50 flex items-center justify-center text-emerald-400">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white">
+                          {currentLang === 'ar' ? 'استطلاع الدرون التكتيكي (UAV DZ-04)' : 'Tactical Drone Reconnaissance (DZ-04)'}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                          FLIR & RGB ACTIVE
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-0.5">
+                        {currentLang === 'ar'
+                          ? 'بث كاميرا الدرون المزدوجة (حراري FLIR وبصري عالي الدقة RGB) مع تتبع شدة الإشعاع الحراري ونقاط القذف المائي.'
+                          : 'Dual-payload aerial camera feed with real-time FLIR thermal thermography, smoke de-haze, and Canadair water drop targeting.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    id="overview-launch-drone-btn"
+                    onClick={() => onOpenDroneSimulation?.(incident)}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-950/40 whitespace-nowrap self-start sm:self-auto"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{currentLang === 'ar' ? 'فتح محاكاة قمرة الدرون' : 'Launch Drone Simulator'}</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Max Core Temp (FLIR)</span>
+                    <span className="text-sm font-bold text-red-400 font-mono">840°C</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Fire Radiative Power</span>
+                    <span className="text-sm font-bold text-amber-400 font-mono">285 MW</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Forward Spread Rate</span>
+                    <span className="text-sm font-bold text-orange-400 font-mono">1.8 km/h</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">Patrol Altitude</span>
+                    <span className="text-sm font-bold text-emerald-400 font-mono">320m AGL</span>
                   </div>
                 </div>
               </div>
