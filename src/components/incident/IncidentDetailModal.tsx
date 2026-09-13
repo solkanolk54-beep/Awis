@@ -16,6 +16,7 @@ import {
   Camera, 
   Send,
   Sparkles,
+  Activity,
   Thermometer,
   Compass,
   FileCheck,
@@ -34,6 +35,8 @@ import { translations } from '../../i18n/translations';
 import { ExplainableAiBreakdown } from './ExplainableAiBreakdown';
 import { AiAssistedDispatchPanel } from './AiAssistedDispatchPanel';
 import { StrategicDispatchPanel } from './StrategicDispatchPanel';
+import { DispatchedUnitsTimelineTab } from './DispatchedUnitsTimelineTab';
+import { ResourceDeploymentAdvisor } from './ResourceDeploymentAdvisor';
 import { computeDistanceKm, computeTravelTimeMinutes, evaluateOptimalUnits } from '../../services/aiDispatchEngine';
 
 interface IncidentDetailModalProps {
@@ -45,6 +48,7 @@ interface IncidentDetailModalProps {
   availableResources: EmergencyResource[];
   currentLang: Language;
   onOpenDroneSimulation?: (incident: WildfireIncident) => void;
+  onOpenBurnRateModeling?: (incident: WildfireIncident) => void;
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
@@ -55,12 +59,15 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
   onDispatchResource,
   availableResources,
   currentLang,
-  onOpenDroneSimulation
+  onOpenDroneSimulation,
+  onOpenBurnRateModeling
 }) => {
   const t = translations[currentLang];
-  const [activeTab, setActiveTab] = useState<'overview' | 'xai' | 'detection' | 'spread' | 'strategic-dispatch' | 'dispatch' | 'validation'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'advisor' | 'dispatched-timeline' | 'strategic-dispatch' | 'dispatch' | 'xai' | 'detection' | 'spread' | 'validation'>('overview');
   const [expertNote, setExpertNote] = useState('');
   const [actionSuccessMessage, setActionSuccessMessage] = useState('');
+
+  const dispatchedUnitsCount = incident.assignedResources.length;
 
   // Proximity-based AI dispatch optimization for top 3 units
   const topOptimalUnits = useMemo(() => {
@@ -105,6 +112,18 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <button
+              id="header-burn-rate-model-btn"
+              onClick={() => onOpenBurnRateModeling?.(incident)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white font-bold text-xs shadow-md shadow-red-950/40 transition cursor-pointer"
+              title="Open D3 Predictive Burn-Rate Modeling (6h, 12h, 24h Projections)"
+            >
+              <Activity className="w-3.5 h-3.5 text-white" />
+              <span>{currentLang === 'ar' ? 'نمذجة الاحتراق (D3)' : 'D3 Burn-Rate'}</span>
+              <span className="px-1.5 py-0.2 rounded bg-black/30 text-amber-200 text-[10px] font-mono font-bold">
+                6h/12h/24h
+              </span>
+            </button>
+            <button
               id="header-drone-recon-btn"
               onClick={() => onOpenDroneSimulation?.(incident)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-950/40 transition cursor-pointer"
@@ -141,6 +160,26 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
         <div className="flex border-b border-slate-800 bg-slate-950/60 text-xs px-4 overflow-x-auto">
           {[
             { id: 'overview', label: currentLang === 'ar' ? 'نظرة عامة تكتيكية' : currentLang === 'fr' ? 'Aperçu Tactique' : 'Tactical Overview', icon: Flame },
+            {
+              id: 'advisor',
+              label: currentLang === 'ar'
+                ? 'مستشار النشر الذكي (Advisor)'
+                : currentLang === 'fr'
+                ? 'Conseiller de Déploiement'
+                : 'Resource Deployment Advisor',
+              icon: Sparkles,
+              badge: 'AI'
+            },
+            { 
+              id: 'dispatched-timeline', 
+              label: currentLang === 'ar' 
+                ? `تتبع الوحدات (${dispatchedUnitsCount})` 
+                : currentLang === 'fr' 
+                ? `Unités Déployées (${dispatchedUnitsCount})` 
+                : `Dispatched Units Timeline (${dispatchedUnitsCount})`, 
+              icon: Route,
+              badge: dispatchedUnitsCount > 0 ? `${dispatchedUnitsCount}` : undefined
+            },
             { id: 'strategic-dispatch', label: currentLang === 'ar' ? 'الإرسال الاستراتيجي (Strategic Dispatch)' : currentLang === 'fr' ? 'Déploiement Stratégique' : 'Strategic Dispatch', icon: Navigation },
             { id: 'xai', label: currentLang === 'ar' ? 'تفسير الذكاء الاصطناعي (Explainable AI)' : currentLang === 'fr' ? 'IA Explicable (Explainable AI)' : 'Explainable AI', icon: Cpu },
             { id: 'detection', label: currentLang === 'ar' ? `دمج الإشارات (${incident.detectionSources.length})` : `Multi-Source Fusion (${incident.detectionSources.length})`, icon: Radio },
@@ -162,6 +201,11 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
               >
                 <Icon className="w-3.5 h-3.5" />
                 <span>{tab.label}</span>
+                {tab.badge && (
+                  <span className="ml-1 px-1.5 py-0.2 text-[10px] font-mono font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {tab.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -322,15 +366,41 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                     </div>
                   </div>
 
-                  <button
-                    id="overview-ai-assisted-dispatch-btn"
-                    onClick={() => setActiveTab('strategic-dispatch')}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-amber-950/40 whitespace-nowrap self-start sm:self-auto"
-                  >
-                    <Navigation className="w-3.5 h-3.5 fill-current" />
-                    <span>{currentLang === 'ar' ? 'عرض خريطة الإرسال الاستراتيجي' : 'Strategic Dispatch Map'}</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                    <button
+                      id="overview-advisor-btn"
+                      onClick={() => setActiveTab('advisor')}
+                      className="px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow whitespace-nowrap"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-current" />
+                      <span>{currentLang === 'ar' ? 'مستشار النشر الذكي' : currentLang === 'fr' ? 'Conseiller IA' : 'Resource Advisor'}</span>
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-mono text-[9px] font-black">AI</span>
+                    </button>
+
+                    <button
+                      id="overview-dispatched-timeline-btn"
+                      onClick={() => setActiveTab('dispatched-timeline')}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow whitespace-nowrap"
+                    >
+                      <Route className="w-3.5 h-3.5 text-amber-400" />
+                      <span>{currentLang === 'ar' ? 'التتبع اللحظي للوحدات' : 'Live Units Timeline'}</span>
+                      {dispatchedUnitsCount > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
+                          {dispatchedUnitsCount}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      id="overview-ai-assisted-dispatch-btn"
+                      onClick={() => setActiveTab('strategic-dispatch')}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-amber-950/40 whitespace-nowrap"
+                    >
+                      <Navigation className="w-3.5 h-3.5 fill-current" />
+                      <span>{currentLang === 'ar' ? 'عرض خريطة الإرسال الاستراتيجي' : 'Strategic Dispatch Map'}</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Top 3 Optimal Units Cards Grid with Highlighted ETA */}
@@ -372,10 +442,10 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                           <div className="mt-1.5 p-1.5 rounded-lg bg-slate-950/80 border border-slate-800 flex items-center justify-between">
                             <span className="text-[10px] text-slate-400 flex items-center gap-1">
                               <Clock className="w-3 h-3 text-amber-400" />
-                              {t.etaArrival}
+                              {t.etaArrival || (currentLang === 'ar' ? 'الوقت المقدر للوصول' : 'Estimated Arrival')}
                             </span>
                             <span className="text-xs font-black font-mono text-amber-300">
-                              {rec.travelTimeMinutes} min
+                              {rec.estimatedTravelTimeMinutes} min
                             </span>
                           </div>
                         </div>
@@ -385,8 +455,8 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                             onDispatchResource(incident.id, rec.resource.id);
                             setActionSuccessMessage(
                               currentLang === 'ar'
-                                ? `تم إرسال ${rec.resource.code} نحو موقع الحريق. زمن الوصول المقدر: ${rec.travelTimeMinutes} دقيقة.`
-                                : `Dispatched unit ${rec.resource.code}. Estimated travel time: ${rec.travelTimeMinutes} min.`
+                                ? `تم إرسال ${rec.resource.code} نحو موقع الحريق. زمن الوصول المقدر: ${rec.estimatedTravelTimeMinutes} دقيقة.`
+                                : `Dispatched unit ${rec.resource.code}. Estimated travel time: ${rec.estimatedTravelTimeMinutes} min.`
                             );
                           }}
                           disabled={isAssigned}
@@ -781,6 +851,37 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                 </span>
               </div>
 
+              {/* D3 Predictive Burn-Rate Modeling Launch Card */}
+              <div className="bg-gradient-to-r from-orange-950/50 via-red-950/40 to-slate-900 border border-orange-500/50 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                    <Activity className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>{currentLang === 'ar' ? 'نمذجة معدل الاحتراق التنبؤية (D3 Burn-Rate Model)' : 'D3 Predictive Burn-Rate Modeling & 24h Isochrones'}</span>
+                      <span className="px-2 py-0.5 rounded bg-orange-500/20 text-orange-300 font-mono text-[10px] font-bold">
+                        6h • 12h • 24h
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      {currentLang === 'ar'
+                        ? 'محاكاة رسومية بـ D3 لانتشار رقعة الحريق خلال 6 و 12 و 24 ساعة مع حساسية سرعة الرياح والرطوبة'
+                        : 'Interactive D3 physics simulation computing projected fire spread over 6, 12, and 24 hours with live wind and humidity data.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpenBurnRateModeling?.(incident)}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white text-xs font-bold shadow-md shadow-orange-950/40 flex items-center gap-2 whitespace-nowrap cursor-pointer transition"
+                >
+                  <Flame className="w-4 h-4 text-white" />
+                  <span>{currentLang === 'ar' ? 'فتح المحاكي (D3)' : 'Open D3 Simulator'}</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
               {/* Isochrones Table */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {incident.spreadPredictions.map((iso) => (
@@ -835,6 +936,28 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* AUTOMATED RESOURCE DEPLOYMENT ADVISOR TAB */}
+          {activeTab === 'advisor' && (
+            <ResourceDeploymentAdvisor
+              incident={incident}
+              availableResources={availableResources}
+              onDispatchResource={onDispatchResource}
+              currentLang={currentLang}
+              onDeploySuccess={(msg) => setActionSuccessMessage(msg)}
+            />
+          )}
+
+          {/* DISPATCHED UNITS REAL-TIME TIMELINE TAB */}
+          {activeTab === 'dispatched-timeline' && (
+            <DispatchedUnitsTimelineTab
+              incident={incident}
+              availableResources={availableResources}
+              onDispatchResource={onDispatchResource}
+              currentLang={currentLang}
+              onDeploySuccess={(msg) => setActionSuccessMessage(msg)}
+            />
           )}
 
           {/* STRATEGIC DISPATCH & OPTIMAL ROUTES TAB */}

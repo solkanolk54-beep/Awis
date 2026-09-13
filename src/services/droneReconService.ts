@@ -22,23 +22,32 @@ export interface HotspotPoint {
 }
 
 // Compute tactical wildfire intensity assessment based on incident thermodynamics
-export function computeDroneTacticalAssessment(incident: WildfireIncident): DroneTacticalAssessment {
-  const isExtreme = incident.riskLevel === 'extreme' || incident.riskLevel === 'critical';
-  const isHigh = incident.riskLevel === 'high';
+export function computeDroneTacticalAssessment(incident?: Partial<WildfireIncident> | null): DroneTacticalAssessment {
+  const safeInc = incident || {};
+  const riskLevel = safeInc.riskLevel || 'high';
+  const isExtreme = riskLevel === 'extreme' || riskLevel === 'critical';
+  const isHigh = riskLevel === 'high';
+
+  const tempC = safeInc.temperatureC ?? 36;
+  const windSpeed = safeInc.windSpeedKmH ?? 28;
+  const slope = safeInc.terrainSlopeDegrees ?? 18;
+  const burnedHa = safeInc.estimatedBurnedHectares ?? 24;
+  const coords = safeInc.coordinates || { lat: 36.784, lng: 5.719 };
+  const windDegrees = safeInc.windDirectionDegrees ?? 225;
 
   // Base flame temperature calculation based on temperature, slope, wind
-  const baseTemp = 450 + (incident.temperatureC * 4.5) + (incident.windSpeedKmH * 3.2) + (incident.terrainSlopeDegrees * 2.8);
+  const baseTemp = 450 + (tempC * 4.5) + (windSpeed * 3.2) + (slope * 2.8);
   const maxHotspotTempC = Math.round(isExtreme ? Math.max(780, baseTemp) : isHigh ? Math.max(620, baseTemp) : 520);
   const flameFrontTempC = Math.round(maxHotspotTempC * 0.82);
-  const ambientTempC = Math.round(incident.temperatureC || 36);
+  const ambientTempC = Math.round(tempC || 36);
 
   // Fire Radiative Power (MW) based on burned hectares & wind
-  const frpBase = (incident.estimatedBurnedHectares * 8.5) + (incident.windSpeedKmH * 3.4);
+  const frpBase = (burnedHa * 8.5) + (windSpeed * 3.4);
   const fireRadiativePowerMw = Math.round(isExtreme ? Math.max(240, frpBase) : Math.max(90, frpBase));
 
   // Rate of spread (meters / minute)
   const spreadRateMMin = Number(
-    (0.4 * Math.exp(0.069 * incident.windSpeedKmH) * (1 + Math.sin((incident.terrainSlopeDegrees * Math.PI) / 180))).toFixed(1)
+    (0.4 * Math.exp(0.069 * windSpeed) * (1 + Math.sin((slope * Math.PI) / 180))).toFixed(1)
   );
 
   // Fire intensity classification
@@ -60,10 +69,10 @@ export function computeDroneTacticalAssessment(incident: WildfireIncident): Dron
 
   // Optimal Water Dropping Point: Advance 120-200 meters ahead of fire center in the wind direction
   // to establish a wet retardant firebreak line ahead of the active front
-  const windRad = (incident.windDirectionDegrees * Math.PI) / 180;
+  const windRad = (windDegrees * Math.PI) / 180;
   const advanceDistDeg = 0.0022; // approx 240 meters
-  const dropLat = incident.coordinates.lat + Math.cos(windRad) * advanceDistDeg;
-  const dropLng = incident.coordinates.lng + Math.sin(windRad) * advanceDistDeg;
+  const dropLat = coords.lat + Math.cos(windRad) * advanceDistDeg;
+  const dropLng = coords.lng + Math.sin(windRad) * advanceDistDeg;
 
   return {
     maxHotspotTempC,
@@ -84,11 +93,13 @@ export function computeDroneTacticalAssessment(incident: WildfireIncident): Dron
 
 // Generate realistic simulated hotspot telemetry points for an incident's camera feed
 export function generateHotspotPoints(
-  incident: WildfireIncident,
-  assessment: DroneTacticalAssessment
+  incident?: Partial<WildfireIncident> | null,
+  assessment?: DroneTacticalAssessment | null
 ): HotspotPoint[] {
+  const safeInc = incident || {};
+  const safeAssessment = assessment || computeDroneTacticalAssessment(safeInc);
   // Offset relative to wind direction
-  const windDir = incident.windDirectionDegrees;
+  const windDir = safeInc.windDirectionDegrees ?? 225;
   const windAngleRad = ((windDir - 90) * Math.PI) / 180;
 
   const coreX = 50 + Math.cos(windAngleRad) * 4;
@@ -105,7 +116,7 @@ export function generateHotspotPoints(
       id: 'spot-core',
       xPercent: Math.min(85, Math.max(15, coreX)),
       yPercent: Math.min(85, Math.max(15, coreY)),
-      tempC: assessment.maxHotspotTempC,
+      tempC: safeAssessment.maxHotspotTempC,
       label: 'MAX CORE FLAME',
       labelAr: 'بؤرة اللهب القصوى',
       type: 'core'
@@ -114,7 +125,7 @@ export function generateHotspotPoints(
       id: 'spot-front',
       xPercent: Math.min(85, Math.max(15, frontX)),
       yPercent: Math.min(85, Math.max(15, frontY)),
-      tempC: assessment.flameFrontTempC,
+      tempC: safeAssessment.flameFrontTempC,
       label: 'ACTIVE FRONT',
       labelAr: 'جبهة التقدم النشطة',
       type: 'front'
@@ -123,7 +134,7 @@ export function generateHotspotPoints(
       id: 'spot-flank',
       xPercent: Math.min(85, Math.max(15, coreX - 18)),
       yPercent: Math.min(85, Math.max(15, coreY + 12)),
-      tempC: Math.round(assessment.flameFrontTempC * 0.76),
+      tempC: Math.round(safeAssessment.flameFrontTempC * 0.76),
       label: 'LEFT FLANK',
       labelAr: 'الجناح الأيسر',
       type: 'front'
@@ -132,7 +143,7 @@ export function generateHotspotPoints(
       id: 'spot-ember',
       xPercent: Math.min(85, Math.max(15, rearX)),
       yPercent: Math.min(85, Math.max(15, rearY)),
-      tempC: Math.round(assessment.maxHotspotTempC * 0.38),
+      tempC: Math.round(safeAssessment.maxHotspotTempC * 0.38),
       label: 'SMOLDERING SCAR',
       labelAr: 'رماد وجمر مشتعل',
       type: 'ember'
@@ -141,7 +152,7 @@ export function generateHotspotPoints(
       id: 'spot-ambient',
       xPercent: 22,
       yPercent: 78,
-      tempC: assessment.ambientTempC,
+      tempC: safeAssessment.ambientTempC,
       label: 'CANOPY AMBIENT',
       labelAr: 'حرارة الغابة الطبيعية',
       type: 'unburned'
@@ -150,14 +161,15 @@ export function generateHotspotPoints(
 }
 
 // Default initial drone mission state
-export function createInitialDroneMission(incident: WildfireIncident): DroneMissionState {
-  const assessment = computeDroneTacticalAssessment(incident);
+export function createInitialDroneMission(incident?: Partial<WildfireIncident> | null): DroneMissionState {
+  const safeInc = incident || {};
+  const assessment = computeDroneTacticalAssessment(safeInc);
 
   return {
     droneId: 'UAV-DZ-04',
     droneName: 'Tactical Recon Thermal Drone DZ-04',
     model: 'ALGIS-CH4 Dual Thermal/RGB UAV',
-    activeIncidentId: incident.id,
+    activeIncidentId: safeInc.id || 'INC-01',
     cameraMode: 'thermal',
     thermalPalette: 'ironbow',
     flightPattern: 'orbit',

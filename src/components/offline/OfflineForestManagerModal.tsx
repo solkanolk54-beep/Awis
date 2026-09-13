@@ -31,7 +31,8 @@ interface OfflineForestManagerModalProps {
   isOnline: boolean;
   isSimulatedOffline: boolean;
   onToggleSimulateOffline: () => void;
-  cacheStats: OfflineCacheStats;
+  cacheStats?: OfflineCacheStats;
+  offlineStats?: OfflineCacheStats;
   onRefreshCache: () => void;
   currentLang: Language;
   queuedReports: QueuedOfflineReport[];
@@ -43,12 +44,23 @@ export const OfflineForestManagerModal: React.FC<OfflineForestManagerModalProps>
   isOnline,
   isSimulatedOffline,
   onToggleSimulateOffline,
-  cacheStats,
+  cacheStats: propCacheStats,
+  offlineStats,
   onRefreshCache,
   currentLang,
   queuedReports,
   onSyncQueuedReports
 }) => {
+  const cacheStats = propCacheStats || offlineStats || {
+    hasCachedData: false,
+    incidentsCount: 0,
+    forestsCount: 0,
+    waterPointsCount: 0,
+    resourcesCount: 0,
+    signalsCount: 0,
+    lastSyncFormatted: null,
+    pendingQueuedReports: 0
+  };
   const t = translations[currentLang];
   const [syncing, setSyncing] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);

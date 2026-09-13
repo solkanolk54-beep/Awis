@@ -35,3 +35,210 @@
     stroke-dashoffset: 0;
   }
 }
+
+/* ==========================================================================
+   OFFICIAL GOVERNMENT INCIDENT DOSSIER & POST-FIRE REPORT PRINT STYLES
+   Optimized for physical record-keeping, A4 paper archiving & PDF generation
+   ========================================================================== */
+
+/* Screen default for print-only elements */
+.print-only,
+.print-only-flex,
+.print-only-grid {
+  display: none !important;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm 14mm 14mm;
+  }
+
+  @page :first {
+    margin-top: 10mm;
+  }
+
+  /* Force clean white background and dark typography on physical paper */
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 9.5pt !important;
+    line-height: 1.35 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide entire background application (GIS map, header, sidebars, alerts) */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Reveal only the printable post-fire report modal and its descendants */
+  #post-fire-report-modal-backdrop,
+  #post-fire-report-modal-backdrop * {
+    visibility: visible !important;
+  }
+
+  /* Neutralize modal backdrop overlay and position at top of print page */
+  #post-fire-report-modal-backdrop {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    min-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    overflow: visible !important;
+    display: block !important;
+    z-index: 99999 !important;
+  }
+
+  /* Convert modal container into an official full-page white document */
+  #post-fire-report-dossier {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    overflow: visible !important;
+  }
+
+  /* Hide interactive controls and screen navigation */
+  .no-print,
+  .print-hidden,
+  button,
+  .modal-close-btn,
+  .tab-nav-bar,
+  .toast-banner {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Reveal print-only elements */
+  .print-only {
+    display: block !important;
+    visibility: visible !important;
+  }
+  .print-only-flex {
+    display: flex !important;
+    visibility: visible !important;
+  }
+  .print-only-grid {
+    display: grid !important;
+    visibility: visible !important;
+  }
+
+  /* Hide screen-only interactive helpers */
+  .screen-only {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Print all sections consecutively regardless of active screen tab */
+  .print-dossier-section {
+    display: block !important;
+    visibility: visible !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 12pt !important;
+  }
+
+  /* Avoid awkward page cuts on cards, tables and signature stamps */
+  .print-avoid-break,
+  .print-card,
+  .print-box,
+  .print-table,
+  .print-stamp-block {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-break-before {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  .print-break-after {
+    break-after: page !important;
+    page-break-after: always !important;
+  }
+
+  /* Archival cards, tables, and borders */
+  .print-card {
+    background-color: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 4px !important;
+    padding: 8pt 10pt !important;
+    color: #0f172a !important;
+  }
+
+  .print-card-highlight {
+    background-color: #f1f5f9 !important;
+    border: 1.5px solid #94a3b8 !important;
+    border-radius: 4px !important;
+    padding: 8pt 10pt !important;
+    color: #0f172a !important;
+  }
+
+  .print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 6pt !important;
+    margin-bottom: 10pt !important;
+    font-size: 8.5pt !important;
+  }
+
+  .print-table th,
+  .print-table td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 5pt 8pt !important;
+    text-align: left !important;
+    color: #0f172a !important;
+  }
+
+  [dir="rtl"] .print-table th,
+  [dir="rtl"] .print-table td {
+    text-align: right !important;
+  }
+
+  .print-table th {
+    background-color: #f1f5f9 !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.03em !important;
+  }
+
+  .print-stamp-box {
+    border: 1.5px dashed #64748b !important;
+    border-radius: 6px !important;
+    background: #fafafa !important;
+    min-height: 85pt !important;
+    padding: 8pt !important;
+  }
+
+  /* Clean headings for archival paper */
+  h1, h2, h3, h4, h5 {
+    color: #0f172a !important;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Remove link styling & underlines on print */
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+}

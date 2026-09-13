@@ -451,8 +451,8 @@ export const ExplainableAiBreakdown: React.FC<ExplainableAiBreakdownProps> = ({
         </div>
 
         {/* Recharts Bar Chart Container */}
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="h-64 w-full min-h-[256px]">
+          <ResponsiveContainer width="100%" height="100%" minHeight={200}>
             <BarChart
               data={[
                 {

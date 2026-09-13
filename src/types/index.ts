@@ -156,6 +156,8 @@ export interface WildfireIncident {
   };
 }
 
+export type NdviHealthCategory = 'critical_drought' | 'moisture_stressed' | 'moderate' | 'healthy_dense';
+
 export interface ForestZone {
   id: string;
   forestId: string; // e.g. "DZ-FOR-TIZI-01"
@@ -182,6 +184,14 @@ export interface ForestZone {
   recoveryHealthPercent: number; // 0-100%
   currentRiskScore: number;
   riskLevel: RiskLevel;
+  // Multi-Spectral NDVI & Fuel Biomass Satellite Telemetry (Copernicus Sentinel-2 MSI)
+  ndviValue?: number; // -0.1 to 0.85
+  ndviAnomalyPercent?: number; // e.g. -28% vs 10-year seasonal baseline
+  vegetationHealthCategory?: NdviHealthCategory;
+  canopyMoisturePercent?: number; // Foliar moisture (FMC) %
+  combustibleBiomassTonsHa?: number; // Dry flammable matter t/ha
+  sentinel2BandRatio?: string; // e.g. "B8(NIR): 0.42 / B4(Red): 0.18"
+  lastSatellitePass?: string;
 }
 
 export interface WaterPoint {
@@ -276,4 +286,97 @@ export interface DroneMissionState {
   gimbalPitch: number;
   isLayerVisibleOnMap: boolean;
   assessment: DroneTacticalAssessment;
+}
+
+// Smart Evacuation Routing & Road Network Types
+export type RoadType = 'highway' | 'national' | 'wilaya' | 'mountain_pass' | 'firebreak';
+export type RoadSafetyStatus = 'open_safe' | 'caution_smoke' | 'blocked_fire' | 'congested';
+
+export interface RoadSegment {
+  id: string;
+  roadNumber: string;
+  nameEn: string;
+  nameAr: string;
+  nameFr: string;
+  type: RoadType;
+  path: GeoCoordinates[];
+  speedLimitKmH: number;
+  lanes: number;
+  capacityVehiclesPerHour: number;
+  elevationGainMeters?: number;
+}
+
+export interface SafeEvacuationZone {
+  id: string;
+  nameEn: string;
+  nameAr: string;
+  nameFr: string;
+  type: 'stadium_shelter' | 'field_hospital' | 'civil_protection_hub' | 'coastal_safe_zone' | 'public_hall';
+  coordinates: GeoCoordinates;
+  wilaya: string;
+  capacityPersons: number;
+  currentOccupancy: number;
+  availableBeds: number;
+  hasMedicalSupport: boolean;
+  hasHelipad: boolean;
+  hasFoodWaterSupply: boolean;
+  emergencyVhfFrequency: string;
+  contactPhone: string;
+}
+
+export interface EvacuationTurnInstruction {
+  stepNumber: number;
+  instructionEn: string;
+  instructionAr: string;
+  instructionFr: string;
+  roadName: string;
+  distanceKm: number;
+  coordinates: GeoCoordinates;
+  turnType: 'straight' | 'turn_left' | 'turn_right' | 'fork' | 'merge' | 'arrive';
+  hazardWarning?: string;
+}
+
+export interface CalculatedEvacuationRoute {
+  id: string;
+  settlementId: string;
+  settlementName: string;
+  settlementNameAr: string;
+  safeZone: SafeEvacuationZone;
+  routeType: 'primary_optimal' | 'secondary_contingency' | 'compromised_blocked';
+  status: RoadSafetyStatus;
+  totalDistanceKm: number;
+  estimatedTravelMinutes: number;
+  estimatedEvacuationClearanceMinutes: number;
+  minFireClearanceKm: number;
+  smokeExposureRisk: 'none' | 'low' | 'moderate' | 'hazardous';
+  bottleneckRiskIndex: number;
+  waypoints: GeoCoordinates[];
+  instructions: EvacuationTurnInstruction[];
+  roadSegmentsUsed: string[];
+  logisticsRequired: {
+    ambulances: number;
+    buses: number;
+    policeEscorts: number;
+    medicalStaff: number;
+  };
+}
+
+export interface EvacuationPlanScenario {
+  id: string;
+  incidentId: string;
+  generatedAt: string;
+  activeFireCenter: GeoCoordinates;
+  windHeadingDegrees: number;
+  windSpeedKmH: number;
+  smokePlumeCone: {
+    origin: GeoCoordinates;
+    headingDegrees: number;
+    lengthKm: number;
+    spreadAngleDegrees: number;
+  };
+  settlementRoutes: CalculatedEvacuationRoute[];
+  blockedRoadIds: string[];
+  totalPopulationAtRisk: number;
+  totalEvacuatedCount: number;
+  advisoryStatus: 'monitoring' | 'voluntary_standby' | 'mandatory_immediate';
 }

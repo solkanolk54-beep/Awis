@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   X, 
   Flame, 
@@ -46,24 +46,28 @@ import {
 import { translations } from '../../i18n/translations';
 
 interface DroneViewSimulationModalProps {
-  isOpen: boolean;
+  isOpen?: boolean;
   onClose: () => void;
-  incidents: WildfireIncident[];
-  selectedIncident: WildfireIncident;
-  onSelectIncident: (inc: WildfireIncident) => void;
+  incidents?: WildfireIncident[];
+  incident?: WildfireIncident | null;
+  selectedIncident?: WildfireIncident | null;
+  onSelectIncident?: (inc: WildfireIncident) => void;
   missionState: DroneMissionState;
-  onUpdateMission: (updated: Partial<DroneMissionState>) => void;
+  onUpdateMission?: (updated: Partial<DroneMissionState>) => void;
+  onUpdateMissionState?: (updated: Partial<DroneMissionState>) => void;
   currentLang: Language;
 }
 
 export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> = ({
-  isOpen,
+  isOpen = true,
   onClose,
-  incidents,
+  incidents = [],
+  incident,
   selectedIncident,
   onSelectIncident,
   missionState,
   onUpdateMission,
+  onUpdateMissionState,
   currentLang
 }) => {
   const t = translations[currentLang];
@@ -72,14 +76,47 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
   const [dropTagged, setDropTagged] = useState(false);
   const [selectedHotspot, setSelectedHotspot] = useState<HotspotPoint | null>(null);
 
+  // Fallback incident resolution
+  const activeIncident: WildfireIncident = useMemo(() => {
+    return selectedIncident || incident || incidents[0] || ({
+      id: 'INC-FALLBACK',
+      code: 'INC-FALLBACK',
+      title: 'Wildfire Incident Recon',
+      titleAr: 'استطلاع جوي للحريق',
+      locationName: 'Active Fire Sector',
+      wilaya: 'Bouira',
+      coordinates: { lat: 36.45, lng: 3.92 },
+      riskLevel: 'high',
+      status: 'active',
+      confidenceScore: 92,
+      estimatedBurnedHectares: 24,
+      windSpeedKmH: 28,
+      windDirectionDegrees: 225,
+      windDirectionCardinal: 'SW',
+      temperatureC: 36,
+      humidityPercent: 18,
+      terrainSlopeDegrees: 18,
+      fuelModel: 'Maquis',
+      detectionSources: [],
+      assignedResources: [],
+      timeline: []
+    } as unknown as WildfireIncident);
+  }, [selectedIncident, incident, incidents]);
+
+  // Handler for mission state updates
+  const handleMissionUpdate = (updated: Partial<DroneMissionState>) => {
+    if (onUpdateMission) onUpdateMission(updated);
+    if (onUpdateMissionState) onUpdateMissionState(updated);
+  };
+
   // Animated canvas reference for dynamic thermal / RGB simulation
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const tickRef = useRef<number>(0);
 
   // Compute live assessment for the current incident
-  const assessment = computeDroneTacticalAssessment(selectedIncident);
-  const hotspots = generateHotspotPoints(selectedIncident, assessment);
+  const assessment = useMemo(() => computeDroneTacticalAssessment(activeIncident), [activeIncident]);
+  const hotspots = useMemo(() => generateHotspotPoints(activeIncident, assessment), [activeIncident, assessment]);
 
   // Flight simulation state (heading animation during orbit)
   useEffect(() => {
@@ -89,12 +126,12 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
       tickRef.current += 1;
       if (missionState.flightPattern === 'orbit') {
         const newHeading = (missionState.headingDegrees + 1) % 360;
-        onUpdateMission({ headingDegrees: newHeading });
+        handleMissionUpdate({ headingDegrees: newHeading });
       }
     }, 150);
 
     return () => clearInterval(interval);
-  }, [isOpen, missionState.flightPattern, missionState.headingDegrees, onUpdateMission]);
+  }, [isOpen, missionState.flightPattern, missionState.headingDegrees]);
 
   // Render animated thermal or RGB drone camera feed
   useEffect(() => {
@@ -113,8 +150,8 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
       const t = tickRef.current * 0.05;
 
       const isThermal = missionState.cameraMode === 'thermal';
-      const windAngleRad = ((selectedIncident.windDirectionDegrees - 90) * Math.PI) / 180;
-      const windStrength = selectedIncident.windSpeedKmH;
+      const windAngleRad = (((activeIncident.windDirectionDegrees ?? 225) - 90) * Math.PI) / 180;
+      const windStrength = activeIncident.windSpeedKmH ?? 25;
 
       ctx.clearRect(0, 0, width, height);
 
@@ -318,12 +355,12 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isOpen, missionState.cameraMode, missionState.thermalPalette, selectedIncident, assessment]);
+  }, [isOpen, missionState.cameraMode, missionState.thermalPalette, activeIncident, assessment]);
 
   if (!isOpen) return null;
 
   const handleToggleCamera = (mode: DroneCameraMode) => {
-    onUpdateMission({ cameraMode: mode });
+    handleMissionUpdate({ cameraMode: mode });
   };
 
   const handleTagWaterDrop = () => {
@@ -364,23 +401,23 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
             <div className="relative flex items-center">
               <select
                 id="drone-incident-selector"
-                value={selectedIncident.id}
+                value={activeIncident.id}
                 onChange={(e) => {
                   const target = incidents.find(i => i.id === e.target.value);
-                  if (target) onSelectIncident(target);
+                  if (target && onSelectIncident) onSelectIncident(target);
                 }}
                 className="bg-slate-800/90 hover:bg-slate-800 text-white font-semibold text-xs rounded-lg px-2.5 py-1.5 border border-slate-700 focus:outline-none focus:border-emerald-500 cursor-pointer pr-8"
               >
-                {incidents.map((inc) => (
+                {(incidents.length > 0 ? incidents : [activeIncident]).map((inc) => (
                   <option key={inc.id} value={inc.id}>
-                    {inc.code} - {currentLang === 'ar' ? inc.wilayaAr : inc.wilaya}: {currentLang === 'ar' ? inc.locationNameAr : inc.locationName}
+                    {inc.code} - {currentLang === 'ar' ? inc.wilayaAr || inc.wilaya : inc.wilaya}: {currentLang === 'ar' ? inc.locationNameAr || inc.locationName : inc.locationName}
                   </option>
                 ))}
               </select>
             </div>
 
             <span className="hidden sm:inline text-slate-500 text-xs font-mono">
-              GPS: {selectedIncident.coordinates.lat.toFixed(4)}°N, {selectedIncident.coordinates.lng.toFixed(4)}°E
+              GPS: {activeIncident.coordinates.lat.toFixed(4)}°N, {activeIncident.coordinates.lng.toFixed(4)}°E
             </span>
           </div>
 
@@ -419,7 +456,7 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
             {/* PROJECT AS LAYER ON GIS MAP TOGGLE */}
             <button
               id="drone-toggle-gis-layer-btn"
-              onClick={() => onUpdateMission({ isLayerVisibleOnMap: !missionState.isLayerVisibleOnMap })}
+              onClick={() => handleMissionUpdate({ isLayerVisibleOnMap: !missionState.isLayerVisibleOnMap })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
                 missionState.isLayerVisibleOnMap
                   ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-950/40'
@@ -486,7 +523,7 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
                   <span className="text-slate-400">020</span>
                   <span className="text-slate-400">030</span>
                   <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
-                    {String(missionState.headingDegrees).padStart(3, '0')}° {selectedIncident.windDirectionCardinal || 'NE'}
+                    {String(missionState.headingDegrees).padStart(3, '0')}° {activeIncident.windDirectionCardinal || 'NE'}
                   </span>
                   <span className="text-slate-400">050</span>
                   <span className="text-slate-400">060</span>
@@ -601,14 +638,14 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
             {/* Quick Floating Zoom / Pitch Overlay Controls */}
             <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1.5 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-xl border border-slate-700 shadow-xl pointer-events-auto">
               <button
-                onClick={() => onUpdateMission({ zoomLevel: Math.min(20, missionState.zoomLevel + 1) })}
+                onClick={() => handleMissionUpdate({ zoomLevel: Math.min(20, missionState.zoomLevel + 1) })}
                 className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                 title="Zoom In"
               >
                 <ZoomIn className="w-4 h-4" />
               </button>
               <button
-                onClick={() => onUpdateMission({ zoomLevel: Math.max(1, missionState.zoomLevel - 1) })}
+                onClick={() => handleMissionUpdate({ zoomLevel: Math.max(1, missionState.zoomLevel - 1) })}
                 className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                 title="Zoom Out"
               >
@@ -616,7 +653,7 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
               </button>
               <div className="h-px bg-slate-700 my-0.5" />
               <button
-                onClick={() => onUpdateMission({ gimbalPitch: missionState.gimbalPitch === -90 ? -45 : -90 })}
+                onClick={() => handleMissionUpdate({ gimbalPitch: missionState.gimbalPitch === -90 ? -45 : -90 })}
                 className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
                 title={missionState.gimbalPitch === -90 ? 'Switch to Oblique View (-45°)' : 'Switch to Nadir View (-90°)'}
               >
@@ -646,7 +683,7 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
                   return (
                     <button
                       key={pat.id}
-                      onClick={() => onUpdateMission({ flightPattern: pat.id as DroneFlightPattern })}
+                      onClick={() => handleMissionUpdate({ flightPattern: pat.id as DroneFlightPattern })}
                       className={`flex items-center gap-2 p-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
                         isActive
                           ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
@@ -672,7 +709,7 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
                   {(['ironbow', 'white_hot', 'black_hot', 'rainbow'] as DroneThermalPalette[]).map((pal) => (
                     <button
                       key={pal}
-                      onClick={() => onUpdateMission({ thermalPalette: pal })}
+                      onClick={() => handleMissionUpdate({ thermalPalette: pal })}
                       className={`p-2 rounded-lg text-xs font-medium border text-left flex flex-col gap-1 transition cursor-pointer ${
                         missionState.thermalPalette === pal
                           ? 'bg-slate-800 border-amber-500 text-amber-300 font-bold'

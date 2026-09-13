@@ -143,8 +143,8 @@ export const NationalAnalyticsModal: React.FC<NationalAnalyticsModalProps> = ({
                 <MapPin className="w-3.5 h-3.5 text-red-400" />
                 Wildfire Incidents & Burned Extent per Wilaya
               </h3>
-              <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-56 w-full min-h-[224px]">
+                <ResponsiveContainer width="100%" height="100%" minHeight={180}>
                   <BarChart data={wilayaIncidentsData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="wilaya" stroke="#94a3b8" fontSize={10} />
@@ -163,8 +163,8 @@ export const NationalAnalyticsModal: React.FC<NationalAnalyticsModalProps> = ({
                 <Flame className="w-3.5 h-3.5 text-orange-400" />
                 Wildfire Seasonality Curve (Algerian Mediterranean Tell)
               </h3>
-              <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-56 w-full min-h-[224px]">
+                <ResponsiveContainer width="100%" height="100%" minHeight={180}>
                   <LineChart data={monthlySeasonalityData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="month" stroke="#94a3b8" fontSize={10} />
@@ -182,8 +182,8 @@ export const NationalAnalyticsModal: React.FC<NationalAnalyticsModalProps> = ({
                 <Satellite className="w-3.5 h-3.5 text-cyan-400" />
                 Detection Source Distribution (%)
               </h3>
-              <div className="h-52 w-full flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-52 w-full min-h-[208px] flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%" minHeight={180}>
                   <PieChart>
                     <Pie
                       data={sourcePerformanceData}
@@ -213,8 +213,8 @@ export const NationalAnalyticsModal: React.FC<NationalAnalyticsModalProps> = ({
                 <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                 Model Iteration: Accuracy vs False Positive Suppression
               </h3>
-              <div className="h-52 w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-52 w-full min-h-[208px]">
+                <ResponsiveContainer width="100%" height="100%" minHeight={180}>
                   <LineChart data={modelAccuracyTrend}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="version" stroke="#94a3b8" fontSize={9} />

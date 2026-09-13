@@ -19,7 +19,8 @@ import {
   HardDrive,
   Bell,
   BellRing,
-  Camera
+  Camera,
+  Satellite
 } from 'lucide-react';
 import { Language, UserRole } from '../../types';
 import { translations } from '../../i18n/translations';
@@ -40,6 +41,8 @@ interface HeaderProps {
   onOpenAnalytics?: () => void;
   onOpenPostFireReport?: () => void;
   onOpenDroneSimulation?: () => void;
+  onOpenBurnRateModeling?: () => void;
+  onOpenSatelliteUplink?: () => void;
   isOnline?: boolean;
   isSimulatedOffline?: boolean;
   onOpenOfflineManager?: () => void;
@@ -63,6 +66,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAnalytics,
   onOpenPostFireReport,
   onOpenDroneSimulation,
+  onOpenBurnRateModeling,
+  onOpenSatelliteUplink,
   isOnline = true,
   isSimulatedOffline = false,
   onOpenOfflineManager,
@@ -370,10 +375,44 @@ export const Header: React.FC<HeaderProps> = ({
           <span>{t.navPostFire}</span>
         </button>
 
+        {onOpenSatelliteUplink && (
+          <button
+            id="btn-header-satellite-uplink"
+            onClick={onOpenSatelliteUplink}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-indigo-200 hover:text-white hover:bg-indigo-900/80 border border-indigo-500/40 bg-indigo-950/60 shadow-sm"
+            title={currentLang === 'ar' ? 'منظومة الاستشعار الفضائي اللحظي ورصد حرائق الجزائر (NASA FIRMS)' : 'NASA EOSDIS Live Satellite Wildfire Uplink Center'}
+          >
+            <Satellite className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+            <span className="font-bold text-indigo-300">
+              {currentLang === 'ar' ? 'أقمار NASA الفضائية' : 'NASA Satellites'}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              VIIRS 375m
+            </span>
+          </button>
+        )}
+
+        {onOpenBurnRateModeling && (
+          <button
+            onClick={onOpenBurnRateModeling}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-orange-300 hover:bg-slate-800/60 border border-orange-500/30 bg-orange-950/40 ml-auto"
+            title="D3 Predictive Burn-Rate Modeling (6h, 12h, 24h Fire Spread Projections)"
+          >
+            <Activity className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
+            <span className="font-semibold text-orange-300">
+              {currentLang === 'ar' ? 'نمذجة الاحتراق (D3)' : 'D3 Burn-Rate'}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40 font-mono font-bold">
+              6h/12h/24h
+            </span>
+          </button>
+        )}
+
         {onOpenDroneSimulation && (
           <button
             onClick={onOpenDroneSimulation}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-emerald-300 hover:bg-slate-800/60 border border-emerald-500/20 bg-emerald-950/30 ml-auto"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-emerald-300 hover:bg-slate-800/60 border border-emerald-500/20 bg-emerald-950/30 ${onOpenBurnRateModeling ? '' : 'ml-auto'}`}
             title="Airborne Drone Reconnaissance Cockpit & Dual Camera Simulator"
           >
             <Camera className="w-3.5 h-3.5 text-emerald-400" />

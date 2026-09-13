@@ -48,7 +48,7 @@ export const PushNotificationModal: React.FC<PushNotificationModalProps> = ({
 
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [supported, setSupported] = useState<boolean>(true);
-  const [settings, setSettings] = useState<NotificationSettings>(getNotificationSettings);
+  const [settings, setSettings] = useState<NotificationSettings>(() => getNotificationSettings());
   const [selectedIncidentId, setSelectedIncidentId] = useState<string>(incidents[0]?.id || '');
   const [countdown, setCountdown] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);

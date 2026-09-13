@@ -87,7 +87,7 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
     : 1;
 
   const deployedResources = scenario === 'accelerating'
-    ? resources.filter((r) => r.status === 'deployed' || r.status === 'en_route').length
+    ? resources.filter((r) => r.status === 'dispatched' || r.status === 'on_scene' || r.status === 'en_route').length
     : Math.max(1, Math.round(resources.length * 0.3));
 
   const isAccelerating = fireRiskTrend.status === 'accelerating';
@@ -318,7 +318,7 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-                {t.activeFires}
+                {t.kpiActiveIncidents}
               </div>
               <div className="p-2 rounded-xl bg-red-500/20 text-red-400 border border-red-500/30">
                 <Flame className="w-4 h-4 animate-pulse" />
@@ -461,7 +461,7 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-                {t.highRiskZones}
+                {t.kpiCriticalZones}
               </div>
               <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
                 <Trees className="w-4 h-4" />
@@ -519,7 +519,7 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-                {t.activeResources}
+                {t.kpiUnitsAvailable}
               </div>
               <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 <Truck className="w-4 h-4" />

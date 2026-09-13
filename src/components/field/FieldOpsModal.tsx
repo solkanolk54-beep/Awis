@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   X, 
   Wifi, 
@@ -15,9 +15,14 @@ import {
   MapPin, 
   Layers,
   Compass,
-  FileText
+  FileText,
+  Truck,
+  Send,
+  Zap,
+  Clock
 } from 'lucide-react';
-import { WildfireIncident, WaterPoint, Language } from '../../types';
+import { WildfireIncident, WaterPoint, EmergencyResource, Language } from '../../types';
+import { SAMPLE_RESOURCES } from '../../data/algeriaData';
 import { translations } from '../../i18n/translations';
 import { UserLivePosition, computeDistanceKm } from '../../services/liveGeolocationService';
 import { LiveWeatherData } from '../../services/liveWeatherService';
@@ -25,6 +30,7 @@ import { LiveWeatherData } from '../../services/liveWeatherService';
 interface FieldOpsModalProps {
   incident: WildfireIncident;
   waterPoints: WaterPoint[];
+  resources?: EmergencyResource[];
   onClose: () => void;
   currentLang: Language;
   userPosition?: UserLivePosition | null;
@@ -34,6 +40,7 @@ interface FieldOpsModalProps {
 export const FieldOpsModal: React.FC<FieldOpsModalProps> = ({
   incident,
   waterPoints,
+  resources = SAMPLE_RESOURCES,
   onClose,
   currentLang,
   userPosition,
@@ -44,10 +51,44 @@ export const FieldOpsModal: React.FC<FieldOpsModalProps> = ({
   const [fieldNote, setFieldNote] = useState('');
   const [sentReportsCount, setSentReportsCount] = useState(2);
   const [waterTankLevel, setWaterTankLevel] = useState(78); // percentage
+  const [dispatchedUnitIds, setDispatchedUnitIds] = useState<Set<string>>(new Set());
 
   const realDistanceKm = userPosition 
     ? computeDistanceKm(userPosition, incident.coordinates)
     : 1.8;
+
+  // Tactical Resource Suggestion Engine:
+  // Identifies and ranks 'Ready' (available) resources closest to the incident and the operative's live GPS position
+  const suggestedReadyResources = useMemo(() => {
+    return resources
+      .filter((r) => r.status === 'available')
+      .map((r) => {
+        const coords = r.currentLocation || r.baseLocation;
+        const distIncident = computeDistanceKm(coords, incident.coordinates);
+        const distUser = userPosition ? computeDistanceKm(userPosition, coords) : null;
+        // Estimated travel time (average response speed ~45 km/h on mountain terrain)
+        const etaMinutes = Math.max(3, Math.round(distIncident * 1.4 + 3));
+        return {
+          ...r,
+          distIncident,
+          distUser,
+          etaMinutes
+        };
+      })
+      .sort((a, b) => a.distIncident - b.distIncident);
+  }, [resources, incident.coordinates, userPosition]);
+
+  const handleRequestDispatch = (unitId: string) => {
+    setDispatchedUnitIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(unitId)) {
+        next.delete(unitId);
+      } else {
+        next.add(unitId);
+      }
+      return next;
+    });
+  };
 
   const handleSendFieldUpdate = () => {
     if (!fieldNote.trim()) return;
@@ -162,6 +203,111 @@ export const FieldOpsModal: React.FC<FieldOpsModalProps> = ({
               <div className="w-10 h-10 rounded-full border border-slate-700 flex items-center justify-center font-mono text-xs font-bold text-sky-400">
                 {incident.windDirectionCardinal}
               </div>
+            </div>
+          </div>
+
+          {/* Tactical Resource Suggestion Engine: Closest Ready Units */}
+          <div className="p-3.5 rounded-2xl bg-slate-800/70 border border-amber-500/40 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-amber-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                {currentLang === 'ar' ? 'محرك الاقتراح التكتيكي: أقرب وحدات التدخل الجاهزة' : 'Tactical Suggestion Engine: Closest Ready Units'}
+              </h4>
+              <span className="text-[10px] text-amber-400/90 font-mono bg-amber-950/80 px-2 py-0.5 rounded border border-amber-600/40">
+                {suggestedReadyResources.length} {currentLang === 'ar' ? 'وحدات جاهزة' : 'Ready Units'}
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {suggestedReadyResources.slice(0, 3).map((res, i) => {
+                const isDispatched = dispatchedUnitIds.has(res.id);
+                const isPrimary = i === 0;
+
+                return (
+                  <div
+                    key={res.id}
+                    className={`p-3 rounded-xl border transition-all ${
+                      isPrimary 
+                        ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900 border-amber-500/50 shadow-md' 
+                        : 'bg-slate-900/80 border-slate-700/80'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                          isPrimary 
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' 
+                            : 'bg-slate-800 text-slate-300'
+                        }`}>
+                          <Truck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-white text-xs">{res.name}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                              {res.code}
+                            </span>
+                            {isPrimary && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50">
+                                {currentLang === 'ar' ? '★ الخيار الأمثل' : '★ Top Choice'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-2">
+                            <span>{res.type.replace('_', ' ').toUpperCase()}</span>
+                            <span>•</span>
+                            <span>{res.capacity ?? 'Ready Unit'}</span>
+                            <span>•</span>
+                            <span>{res.wilaya}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="text-xs font-mono font-bold text-amber-300 flex items-center justify-end gap-1">
+                          <Clock className="w-3 h-3 text-amber-400" />
+                          <span>~{res.etaMinutes} min ETA</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          {res.distIncident.toFixed(1)} km {currentLang === 'ar' ? 'من الحريق' : 'to Fire'}
+                        </div>
+                        {res.distUser !== null && (
+                          <div className="text-[9px] text-sky-400 font-mono">
+                            {res.distUser.toFixed(1)} km {currentLang === 'ar' ? 'من موقعك' : 'to GPS'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between">
+                      <div className="text-[10px] text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>{currentLang === 'ar' ? 'جاهزية قتالية كاملة (خزان ممتلئ)' : 'Full Readiness (Water Tanks 100%)'}</span>
+                      </div>
+                      <button
+                        onClick={() => handleRequestDispatch(res.id)}
+                        className={`px-3 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                          isDispatched
+                            ? 'bg-emerald-600 text-white shadow-lg'
+                            : 'bg-amber-600 hover:bg-amber-500 text-white shadow'
+                        }`}
+                      >
+                        {isDispatched ? (
+                          <>
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                            <span>{currentLang === 'ar' ? 'تم طلب الإسناد ✓' : 'Dispatched ✓'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-3 h-3" />
+                            <span>{currentLang === 'ar' ? 'طلب إسناد فوري' : 'Request Dispatch'}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

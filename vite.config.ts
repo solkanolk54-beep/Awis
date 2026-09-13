@@ -5,12 +5,18 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/Awis/', // أضف هذا السطر هنا لتحديد مسار المستودع على GitHub Pages
+    base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
+      dedupe: ['react', 'react-dom'],
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'react': path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
       },
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'lucide-react', 'd3', 'recharts'],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

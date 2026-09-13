@@ -43,7 +43,7 @@ export const AlertFeedSidebar: React.FC<AlertFeedSidebarProps> = ({
     if (sourceFilter === 'all') return true;
     if (sourceFilter === 'satellite') return s.source.includes('satellite');
     if (sourceFilter === 'camera') return s.source === 'watchtower_camera';
-    if (sourceFilter === 'citizen') return s.source === 'citizen_app';
+    if (sourceFilter === 'citizen') return s.source === 'citizen_report';
     return true;
   });
 
@@ -63,7 +63,7 @@ export const AlertFeedSidebar: React.FC<AlertFeedSidebarProps> = ({
             <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
           </div>
           <h3 className="font-bold text-slate-200 uppercase tracking-wider text-xs">
-            {t.alertFeed}
+            {t.alertFeed || (currentLang === 'ar' ? 'موجز الإنذارات الحية' : 'Live Alert Feed')}
           </h3>
           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
             {filteredSignals.length} Active

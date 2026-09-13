@@ -207,18 +207,23 @@ export function clearQueuedOfflineReports(): void {
 }
 
 /**
- * Registers the Service Worker to guarantee offline app execution in remote areas
+ * Safely unregisters stale Service Workers and clears cache storage to prevent duplicate React instances
  */
 export async function registerServiceWorker(): Promise<boolean> {
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js', {
-        scope: '/'
-      });
-      console.log('[AWIS PWA] Service Worker active with scope:', registration.scope);
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        for (const key of keys) {
+          await caches.delete(key);
+        }
+      }
       return true;
-    } catch (error) {
-      console.warn('[AWIS PWA] Service Worker registration encountered error:', error);
+    } catch {
       return false;
     }
   }

@@ -31,6 +31,7 @@ import { SimulationController } from './components/simulation/SimulationControll
 import { NationalAnalyticsModal } from './components/analytics/NationalAnalyticsModal';
 import { PostFireReportModal } from './components/reports/PostFireReportModal';
 import { DroneViewSimulationModal } from './components/simulation/DroneViewSimulationModal';
+import { PredictiveBurnRateModal } from './components/simulation/PredictiveBurnRateModal';
 import { computeDroneTacticalAssessment } from './services/droneReconService';
 import { translations } from './i18n/translations';
 import { fetchLiveWeather, LiveWeatherData } from './services/liveWeatherService';
@@ -60,6 +61,8 @@ import {
   markIncidentAsNotified
 } from './services/notificationService';
 import { PushNotificationModal } from './components/notifications/PushNotificationModal';
+import { startFirmsPolling, fetchFirmsHotspots, transformFirmsToIncidents, FirmsDetection } from './services/firmsService';
+import { LiveSatelliteModal } from './components/gis/LiveSatelliteModal';
 
 export default function App() {
   const [currentLang, setCurrentLang] = useState<Language>('ar');
@@ -79,13 +82,16 @@ export default function App() {
   const [isWeatherLoading, setIsWeatherLoading] = useState<boolean>(false);
   const [userPosition, setUserPosition] = useState<UserLivePosition | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [firmsDetections, setFirmsDetections] = useState<FirmsDetection[]>([]);
+  const [isFirmsRefreshing, setIsFirmsRefreshing] = useState<boolean>(false);
+  const [lastFirmsSyncTime, setLastFirmsSyncTime] = useState<Date>(new Date());
 
   // Offline Forest Operations & Service Worker Cache State
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
   const [showOfflineModal, setShowOfflineModal] = useState<boolean>(false);
-  const [offlineStats, setOfflineStats] = useState<OfflineCacheStats>(getOfflineCacheStats);
-  const [queuedReports, setQueuedReports] = useState<QueuedOfflineReport[]>(getQueuedOfflineReports);
+  const [offlineStats, setOfflineStats] = useState<OfflineCacheStats>(() => getOfflineCacheStats());
+  const [queuedReports, setQueuedReports] = useState<QueuedOfflineReport[]>(() => getQueuedOfflineReports());
 
   // Active Selected Entities
   const [selectedIncident, setSelectedIncident] = useState<WildfireIncident | null>(SAMPLE_INCIDENTS[0]);
@@ -100,22 +106,39 @@ export default function App() {
   const [showAnalyticsModal, setShowAnalyticsModal] = useState<boolean>(false);
   const [showPostFireModal, setShowPostFireModal] = useState<boolean>(false);
 
+  // D3 Predictive Burn-Rate Modeling State
+  const [showBurnRateModal, setShowBurnRateModal] = useState<boolean>(false);
+  const [burnRateIncident, setBurnRateIncident] = useState<WildfireIncident | null>(SAMPLE_INCIDENTS[0]);
+  const [showSatelliteModal, setShowSatelliteModal] = useState<boolean>(false);
+
+  const handleOpenBurnRateModeling = (targetIncident?: WildfireIncident) => {
+    const inc = targetIncident || selectedIncident || incidents[0] || SAMPLE_INCIDENTS[0];
+    if (inc) {
+      setBurnRateIncident(inc);
+    }
+    setShowBurnRateModal(true);
+  };
+
   // Tactical Airborne Drone Reconnaissance & Camera Feeds State
   const [showDroneSimulationModal, setShowDroneSimulationModal] = useState<boolean>(false);
   const [droneMissionIncident, setDroneMissionIncident] = useState<WildfireIncident | null>(SAMPLE_INCIDENTS[0]);
   const [droneMissionState, setDroneMissionState] = useState<DroneMissionState>(() => ({
     droneId: 'UAV-DZ-04',
+    droneName: 'SkyEye-DZ4',
     model: 'SkyEye-Algeria Pro-Tactical',
-    patrolIncidentId: SAMPLE_INCIDENTS[0]?.id || 'INC-01',
+    activeIncidentId: SAMPLE_INCIDENTS[0]?.id || 'INC-01',
     cameraMode: 'thermal',
+    thermalPalette: 'ironbow',
+    flightPattern: 'orbit',
     altitudeMeters: 320,
     headingDegrees: 42,
+    speedKmH: 48,
     batteryPercent: 88,
-    gimbalPitchDegrees: -45,
+    signalStrengthPercent: 96,
     zoomLevel: 1.5,
+    gimbalPitch: -45,
     isLayerVisibleOnMap: true,
-    isDehazeActive: true,
-    assessment: computeDroneTacticalAssessment(SAMPLE_INCIDENTS[0] || ({} as WildfireIncident))
+    assessment: computeDroneTacticalAssessment(SAMPLE_INCIDENTS[0] || null)
   }));
 
   const handleOpenDroneSimulation = (targetIncident?: WildfireIncident) => {
@@ -124,7 +147,7 @@ export default function App() {
       setDroneMissionIncident(inc);
       setDroneMissionState((prev) => ({
         ...prev,
-        patrolIncidentId: inc.id,
+        activeIncidentId: inc.id,
         assessment: computeDroneTacticalAssessment(inc)
       }));
     }
@@ -188,8 +211,10 @@ export default function App() {
         lat: 36.7538,
         lng: 5.0567,
         accuracyMeters: 18,
-        timestamp: Date.now(),
-        isSimulated: false
+        altitudeMeters: 420,
+        headingDegrees: null,
+        speedMps: null,
+        timestamp: new Date().toISOString()
       });
     } finally {
       setIsLocating(false);
@@ -219,6 +244,59 @@ export default function App() {
     };
   }, []);
 
+  // Helper to ingest FIRMS satellite signals into live telemetry
+  const ingestFirmsSignals = (detections: FirmsDetection[]) => {
+    const satSignals: DetectionSignal[] = detections.map((d) => ({
+      id: `sig-firms-${d.id}`,
+      source: 'satellite_firms',
+      sourceName: `${d.satellite} (${d.instrument})`,
+      timestamp: `${d.acqDate} ${d.acqTime} UTC`,
+      confidence: d.confidencePercent,
+      location: { lat: d.latitude, lng: d.longitude },
+      details: `NASA FIRMS VIIRS 375m thermal anomaly detected (${d.frpMw} MW, ${Math.round(d.brightnessTempKelvin - 273.15)}°C). Confidence: ${d.confidence}. Wilaya: ${d.wilayaAr}.`,
+      sensorMetadata: {
+        device: `${d.satellite} ${d.instrument}`,
+        temperatureReading: Math.round(d.brightnessTempKelvin - 273.15),
+        thermalAnomalyMw: d.frpMw
+      }
+    }));
+
+    setSignals((prev) => {
+      const existingIds = new Set(prev.map((s) => s.id));
+      const newOnes = satSignals.filter((s) => !existingIds.has(s.id));
+      if (newOnes.length === 0) return prev;
+      return [...newOnes, ...prev];
+    });
+  };
+
+  // Real-Time NASA FIRMS Satellite Telemetry Polling (VIIRS 375m & MODIS)
+  useEffect(() => {
+    const cancelFirmsPolling = startFirmsPolling((detections) => {
+      setFirmsDetections(detections);
+      setLastFirmsSyncTime(new Date());
+      ingestFirmsSignals(detections);
+    }, 60000);
+
+    return () => {
+      cancelFirmsPolling();
+    };
+  }, []);
+
+  // Manual Force-Refresh Handler for NASA FIRMS data (bypasses 60s poll timer)
+  const handleForceRefreshFirms = async () => {
+    setIsFirmsRefreshing(true);
+    try {
+      const detections = await fetchFirmsHotspots(true);
+      setFirmsDetections(detections);
+      setLastFirmsSyncTime(new Date());
+      ingestFirmsSignals(detections);
+    } catch (err) {
+      console.warn('Manual NASA FIRMS force update error:', err);
+    } finally {
+      setIsFirmsRefreshing(false);
+    }
+  };
+
   // Sync Queued Offline Reports when internet is restored
   const handleSyncQueuedReports = () => {
     const pending = getQueuedOfflineReports();
@@ -233,6 +311,7 @@ export default function App() {
           {
             id: `evt-offline-sync-${Date.now()}`,
             timestamp: new Date().toISOString().substring(11, 19),
+            type: 'verification',
             title: `Synced ${pending.length} Offline Field Reports`,
             description: 'Cached field intelligence successfully reconciled with Central Command.',
             sourceBadge: 'Offline Buffer Reconciled'
@@ -379,6 +458,9 @@ export default function App() {
   const handleSelectIncident = (inc: WildfireIncident) => {
     setSelectedIncident(inc);
     setShowIncidentModal(true);
+    if (inc?.coordinates) {
+      loadLiveWeather(inc.coordinates);
+    }
   };
 
   // Handler to open forest modal
@@ -397,16 +479,18 @@ export default function App() {
             status: 'confirmed',
             confidenceScore: Math.max(inc.confidenceScore, 98),
             expertValidation: {
-              validatedBy: 'Human Duty Officer (Command Post)',
-              validationTimestamp: new Date().toISOString().substring(11, 19),
-              verdict: 'confirmed',
-              notes
+              verified: true,
+              expertName: 'Human Duty Officer (Command Post)',
+              decision: 'confirmed',
+              notes,
+              timestamp: new Date().toISOString().substring(11, 19)
             },
             timeline: [
               ...inc.timeline,
               {
                 id: `evt-${Date.now()}`,
                 timestamp: new Date().toISOString().substring(11, 19),
+                type: 'verification',
                 title: 'Incident Formally Confirmed by Duty Commander',
                 description: notes,
                 sourceBadge: 'Human-in-the-Loop'
@@ -426,13 +510,14 @@ export default function App() {
         if (inc.id === id) {
           return {
             ...inc,
-            status: 'controlled',
+            status: 'false_positive',
             confidenceScore: 10,
             expertValidation: {
-              validatedBy: 'Human Duty Officer (Command Post)',
-              validationTimestamp: new Date().toISOString().substring(11, 19),
-              verdict: 'rejected_false_alarm',
-              notes: reason
+              verified: false,
+              expertName: 'Human Duty Officer (Command Post)',
+              decision: 'rejected',
+              notes: reason,
+              timestamp: new Date().toISOString().substring(11, 19)
             }
           };
         }
@@ -454,6 +539,7 @@ export default function App() {
               {
                 id: `evt-${Date.now()}`,
                 timestamp: new Date().toISOString().substring(11, 19),
+                type: 'dispatch',
                 title: `Resource Unit Dispatched: ${resourceId}`,
                 description: 'Tactical unit mobilized with priority right of way.',
                 sourceBadge: 'Civil Protection Dispatch'
@@ -526,6 +612,7 @@ export default function App() {
                 {
                   id: `evt-cit-${Date.now()}`,
                   timestamp: new Date().toISOString().substring(11, 19),
+                  type: 'detection',
                   title: 'Citizen Mobile GPS Sighting Ingested',
                   description: `Eyewitness report verified via cellular tower triangulation: ${report.locationNameHint}`,
                   sourceBadge: 'Citizen Hotline'
@@ -546,6 +633,39 @@ export default function App() {
     }
   };
 
+  // Promote NASA FIRMS Active Incident Zone cluster to formal monitored incident
+  const handlePromoteClusterToIncident = (newIncident: WildfireIncident) => {
+    setIncidents((prev) => {
+      if (prev.some((i) => i.id === newIncident.id)) return prev;
+      return [newIncident, ...prev];
+    });
+    setSelectedIncident(newIncident);
+    setShowIncidentModal(true);
+
+    // Register high-priority detection signal in the Alert Fusion Feed
+    const newSignal: DetectionSignal = {
+      id: `sig-cluster-${Date.now()}`,
+      source: 'satellite_firms',
+      sourceName: `VIIRS/MODIS Spatial Cluster (${newIncident.code})`,
+      timestamp: new Date().toISOString().substring(11, 19),
+      location: newIncident.coordinates,
+      confidence: newIncident.confidenceScore,
+      details: currentLang === 'ar'
+        ? `تمت ترقية تجمع شواذ حرارية فضائية (${newIncident.code}) إلى حادث عملياتي مراقب`
+        : `Promoted spatial satellite anomaly cluster (${newIncident.code}) to monitored incident`,
+      sensorMetadata: {
+        thermalAnomalyMw: newIncident.estimatedBurnedHectares,
+        device: 'NASA FIRMS VIIRS/MODIS Aggregator'
+      }
+    };
+    setSignals((prev) => [newSignal, ...prev]);
+
+    // Dispatch system push notification if enabled
+    if (notificationPermission === 'granted') {
+      dispatchHighPriorityFireNotification(newIncident, currentLang);
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-[#050811] text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-black">
       {/* Top Institutional Header */}
@@ -558,6 +678,8 @@ export default function App() {
         onOpenAnalytics={() => setShowAnalyticsModal(true)}
         onOpenPostFireReport={() => setShowPostFireModal(true)}
         onOpenDroneSimulation={() => handleOpenDroneSimulation()}
+        onOpenBurnRateModeling={() => handleOpenBurnRateModeling()}
+        onOpenSatelliteUplink={() => setShowSatelliteModal(true)}
         isOnline={isOnline}
         isSimulatedOffline={isSimulatedOffline}
         onOpenOfflineManager={() => setShowOfflineModal(true)}
@@ -594,9 +716,11 @@ export default function App() {
               waterPoints={waterPoints}
               watchtowers={watchtowers}
               resources={resources}
+              firmsDetections={firmsDetections}
               selectedIncident={selectedIncident}
               onSelectIncident={handleSelectIncident}
               onSelectForest={handleSelectForest}
+              onDispatchResource={handleDispatchResource}
               currentLang={currentLang}
               userPosition={userPosition}
               onLocateUser={handleLocateUser}
@@ -608,6 +732,10 @@ export default function App() {
               droneMission={droneMissionState}
               onUpdateDroneMission={handleUpdateDroneMission}
               onOpenDroneSimulation={handleOpenDroneSimulation}
+              onForceRefreshFirms={handleForceRefreshFirms}
+              isFirmsRefreshing={isFirmsRefreshing}
+              lastFirmsSyncTime={lastFirmsSyncTime}
+              onPromoteClusterToIncident={handlePromoteClusterToIncident}
             />
           </div>
 
@@ -638,6 +766,7 @@ export default function App() {
           availableResources={resources}
           currentLang={currentLang}
           onOpenDroneSimulation={(inc) => handleOpenDroneSimulation(inc)}
+          onOpenBurnRateModeling={(inc) => handleOpenBurnRateModeling(inc)}
         />
       )}
 
@@ -665,6 +794,7 @@ export default function App() {
         <FieldOpsModal
           incident={selectedIncident}
           waterPoints={waterPoints}
+          resources={resources}
           onClose={() => setShowFieldOpsModal(false)}
           currentLang={currentLang}
           userPosition={userPosition}
@@ -737,11 +867,56 @@ export default function App() {
       {/* Tactical Airborne Drone Reconnaissance & Dual Camera (Thermal/RGB) Simulator Modal */}
       {showDroneSimulationModal && droneMissionIncident && (
         <DroneViewSimulationModal
+          isOpen={showDroneSimulationModal}
           incident={droneMissionIncident}
+          selectedIncident={droneMissionIncident}
+          incidents={incidents}
+          onSelectIncident={(inc) => {
+            setDroneMissionIncident(inc);
+            setDroneMissionState((prev) => ({
+              ...prev,
+              patrolIncidentId: inc.id,
+              assessment: computeDroneTacticalAssessment(inc)
+            }));
+          }}
           onClose={() => setShowDroneSimulationModal(false)}
           currentLang={currentLang}
           missionState={droneMissionState}
+          onUpdateMission={handleUpdateDroneMission}
           onUpdateMissionState={handleUpdateDroneMission}
+        />
+      )}
+
+      {/* D3 Predictive Burn-Rate Modeling & 24h Isochrones Modal */}
+      {showBurnRateModal && (
+        <PredictiveBurnRateModal
+          incident={burnRateIncident || selectedIncident || incidents[0]}
+          allIncidents={incidents}
+          onSelectIncident={(inc) => setBurnRateIncident(inc)}
+          onClose={() => setShowBurnRateModal(false)}
+          currentLang={currentLang}
+        />
+      )}
+
+      {/* Real-Time NASA FIRMS Satellite Uplink Center Modal */}
+      {showSatelliteModal && (
+        <LiveSatelliteModal
+          isOpen={showSatelliteModal}
+          onClose={() => setShowSatelliteModal(false)}
+          currentLang={currentLang}
+          onRefreshFirms={handleForceRefreshFirms}
+          isRefreshing={isFirmsRefreshing}
+          detections={firmsDetections}
+          onSelectHotspot={(hotspot) => {
+            const transformed = transformFirmsToIncidents([hotspot])[0];
+            if (transformed) {
+              setSelectedIncident(transformed);
+              setShowIncidentModal(true);
+              if (transformed.coordinates) {
+                loadLiveWeather(transformed.coordinates);
+              }
+            }
+          }}
         />
       )}
     </div>

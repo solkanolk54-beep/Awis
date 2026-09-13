@@ -196,7 +196,7 @@ export const MiniSparkline: React.FC<MiniSparklineProps> = ({
             strokeWidth="1"
             className="opacity-70"
           >
-            <title>Min: {minPoint.data.score} at {minPoint.data.hour}</title>
+            <title>{`Min: ${minPoint.data.score} at ${minPoint.data.hour}`}</title>
           </circle>
         )}
 
@@ -211,7 +211,7 @@ export const MiniSparkline: React.FC<MiniSparklineProps> = ({
             strokeWidth="1"
             className="opacity-90"
           >
-            <title>Peak: {maxPoint.data.score} at {maxPoint.data.hour}</title>
+            <title>{`Peak: ${maxPoint.data.score} at ${maxPoint.data.hour}`}</title>
           </circle>
         )}
 

@@ -12,7 +12,8 @@ import {
   Sparkles,
   Activity,
   Layers,
-  ThermometerSnowflake
+  ThermometerSnowflake,
+  AlertTriangle
 } from 'lucide-react';
 import { ForestZone, Language } from '../../types';
 import { translations } from '../../i18n/translations';
@@ -100,12 +101,122 @@ export const ForestTwinModal: React.FC<ForestTwinModalProps> = ({
 
             <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700">
               <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Bio-Recovery
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> NDVI Index
               </div>
-              <div className="text-base font-bold text-emerald-400 mt-1">
-                {forest.recoveryHealthPercent}%
+              <div className="text-base font-bold text-emerald-400 mt-1 font-mono">
+                {forest.ndviValue ?? ((forest.recoveryHealthPercent / 100) * 0.7).toFixed(2)}
               </div>
-              <div className="text-[11px] text-slate-400">NDVI Greenness Index</div>
+              <div className="text-[11px] text-amber-400 font-mono">
+                Anomaly: {forest.ndviAnomalyPercent ?? -20}%
+              </div>
+            </div>
+          </div>
+
+          {/* Sentinel-2 Multi-Spectral NDVI & Vegetation Health Analysis Panel */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-950 border border-emerald-500/40 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    {currentLang === 'ar' ? 'التحليل الطيفي لصحة الغطاء النباتي (Sentinel-2 MSI)' : 'Sentinel-2 Multi-Spectral NDVI & Fuel Biomass'}
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    {forest.lastSatellitePass || 'Copernicus Sentinel-2 • 10-Day Multi-Spectral Composite'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold font-mono border ${
+                (forest.ndviValue ?? 0.35) < 0.25
+                  ? 'bg-red-950/80 text-red-300 border-red-700'
+                  : (forest.ndviValue ?? 0.35) < 0.40
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-700'
+                  : 'bg-emerald-950/80 text-emerald-300 border-emerald-700'
+              }`}>
+                {(forest.ndviValue ?? 0.35) < 0.25 
+                  ? (currentLang === 'ar' ? 'إجهاد جفاف حاد' : 'Critical Drought')
+                  : (forest.ndviValue ?? 0.35) < 0.40
+                  ? (currentLang === 'ar' ? 'عجز رطوبي' : 'Moisture Deficit')
+                  : (currentLang === 'ar' ? 'غطاء نباتي صحي' : 'Healthy Canopy')}
+              </span>
+            </div>
+
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+              <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">
+                  {currentLang === 'ar' ? 'محتوى رطوبة الأوراق (FMC)' : 'Foliar Moisture Content (FMC)'}
+                </span>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className="text-base font-bold font-mono text-cyan-300">
+                    {forest.canopyMoisturePercent ?? 16}%
+                  </span>
+                  <span className="text-[10px] text-red-400">
+                    (Ignition Threshold: &lt; 20%)
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">
+                  {currentLang === 'ar' ? 'الكتلة الحيوية القابلة للاشتعال' : 'Combustible Live Fuel Load'}
+                </span>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className="text-base font-bold font-mono text-amber-300">
+                    {forest.combustibleBiomassTonsHa ?? 24} t/ha
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    (Dry-matter load)
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">
+                  {currentLang === 'ar' ? 'انحراف المقارنة التاريخية' : '10-Year Anomaly Departure'}
+                </span>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className={`text-base font-bold font-mono ${
+                    (forest.ndviAnomalyPercent ?? 0) < -20 ? 'text-red-400' : 'text-emerald-400'
+                  }`}>
+                    {forest.ndviAnomalyPercent ?? -15}%
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    vs Seasonal Median
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Continuous Color Bar Scale representation */}
+            <div className="pt-1">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+                <span>NDVI Index: <strong className="text-white">{forest.ndviValue ?? 0.35}</strong></span>
+                <span className="text-[9px] text-slate-500">{forest.sentinel2BandRatio || 'B8(NIR) / B4(Red)'}</span>
+              </div>
+              <div className="relative h-2.5 w-full rounded-full bg-gradient-to-r from-red-600 via-amber-500 via-lime-500 to-emerald-600 overflow-hidden border border-slate-700">
+                {/* Needle pointer */}
+                <div 
+                  className="absolute top-0 bottom-0 w-1.5 bg-white border border-slate-900 rounded-full shadow-lg transform -translate-x-1/2"
+                  style={{ 
+                    left: `${Math.max(5, Math.min(95, (((forest.ndviValue ?? 0.35) - 0.1) / 0.7) * 100))}%` 
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Tactical Forest Flammability Guidance */}
+            <div className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[11px] text-slate-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                {currentLang === 'ar'
+                  ? `توصية العمليات: نظراً لعجز الرطوبة الورقية (${forest.canopyMoisturePercent ?? 16}%) في كتلة ${forest.nameAr}، يُوصى بتكثيف دوريات الرصد بأبراج المراقبة (${forest.watchtowersCount}) وتجهيز خزانات التزود بالمياه القريبة (${forest.waterPointsCount} نقاط).`
+                  : `Operational Advice: With canopy foliar moisture at ${forest.canopyMoisturePercent ?? 16}%, heightened flame-front velocities and crown ignition vulnerability require pre-positioning tactical tankers at nearby water points (${forest.waterPointsCount}) and proactive watchtower rotation.`}
+              </p>
             </div>
           </div>
 
