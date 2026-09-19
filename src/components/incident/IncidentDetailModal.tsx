@@ -28,10 +28,12 @@ import {
   BarChart3,
   ChevronRight,
   Navigation,
-  Route
+  Route,
+  Lock
 } from 'lucide-react';
 import { WildfireIncident, EmergencyResource, Language } from '../../types';
 import { translations } from '../../i18n/translations';
+import { useRBAC } from '../../context/RBACContext';
 import { ExplainableAiBreakdown } from './ExplainableAiBreakdown';
 import { AiAssistedDispatchPanel } from './AiAssistedDispatchPanel';
 import { StrategicDispatchPanel } from './StrategicDispatchPanel';
@@ -49,6 +51,7 @@ interface IncidentDetailModalProps {
   currentLang: Language;
   onOpenDroneSimulation?: (incident: WildfireIncident) => void;
   onOpenBurnRateModeling?: (incident: WildfireIncident) => void;
+  onOpenEvacuationAlert?: (incident: WildfireIncident) => void;
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
@@ -60,7 +63,8 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
   availableResources,
   currentLang,
   onOpenDroneSimulation,
-  onOpenBurnRateModeling
+  onOpenBurnRateModeling,
+  onOpenEvacuationAlert
 }) => {
   const t = translations[currentLang];
   const [activeTab, setActiveTab] = useState<'overview' | 'advisor' | 'dispatched-timeline' | 'strategic-dispatch' | 'dispatch' | 'xai' | 'detection' | 'spread' | 'validation'>('overview');
@@ -74,19 +78,56 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
     return evaluateOptimalUnits(incident, availableResources);
   }, [incident, availableResources]);
 
+  const { permissions, checkAndExecute, role } = useRBAC();
+
   const handleConfirm = () => {
-    onConfirmIncident(incident.id, expertNote || 'Validated by Human Duty Commander based on multi-sensor convergence.');
-    setActionSuccessMessage('Incident confirmed and escalated to Active Response.');
+    checkAndExecute(
+      currentLang === 'ar' ? 'اعتماد الحريق رسمياً' : 'Official Incident Verification',
+      'CentralCommand',
+      () => {
+        onConfirmIncident(incident.id, expertNote || 'Validated by Human Duty Commander based on multi-sensor convergence.');
+        setActionSuccessMessage('Incident confirmed and escalated to Active Response.');
+      }
+    );
   };
 
   const handleReject = () => {
-    onRejectIncident(incident.id, expertNote || 'Classified as controlled agricultural clearing / false positive.');
-    setActionSuccessMessage('Incident rejected and logged as false positive for AI model fine-tuning.');
+    checkAndExecute(
+      currentLang === 'ar' ? 'رفض الإنذار الكاذب' : 'Reject False Alarm',
+      'CentralCommand',
+      () => {
+        onRejectIncident(incident.id, expertNote || 'Classified as controlled agricultural clearing / false positive.');
+        setActionSuccessMessage('Incident rejected and logged as false positive for AI model fine-tuning.');
+      }
+    );
+  };
+
+  const handleDispatchUnit = (resourceId: string, resourceCode: string, travelTimeMinutes: number) => {
+    checkAndExecute(
+      currentLang === 'ar' ? `تحريك الوحدة ${resourceCode}` : `Dispatch Unit ${resourceCode}`,
+      'CentralCommand',
+      () => {
+        onDispatchResource(incident.id, resourceId);
+        setActionSuccessMessage(
+          currentLang === 'ar'
+            ? `تم إرسال ${resourceCode} نحو موقع الحريق. زمن الوصول المقدر: ${travelTimeMinutes} دقيقة.`
+            : `Dispatched unit ${resourceCode}. Estimated travel time: ${travelTimeMinutes} min.`
+        );
+      }
+    );
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/75 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div 
+      id="incident-detail-modal-backdrop"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/75 backdrop-blur-md overflow-y-auto cursor-pointer"
+    >
+      <div 
+        id="incident-detail-modal-content"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] cursor-default"
+      >
         {/* Header Bar */}
         <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700/80 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -111,6 +152,20 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {onOpenEvacuationAlert && (
+              <button
+                id="header-evacuation-sms-btn"
+                onClick={() => onOpenEvacuationAlert(incident)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-md shadow-red-950/40 transition cursor-pointer"
+                title="Dispatch Geofenced Evacuation Cell Broadcast (Mobilis, Djezzy, Ooredoo)"
+              >
+                <Radio className="w-3.5 h-3.5 text-white animate-pulse" />
+                <span>{currentLang === 'ar' ? 'بث الإخلاء (SMS)' : 'Evac SMS/CB'}</span>
+                <span className="px-1.5 py-0.2 rounded bg-black/30 text-rose-200 text-[10px] font-mono font-bold">
+                  HIGH
+                </span>
+              </button>
+            )}
             <button
               id="header-burn-rate-model-btn"
               onClick={() => onOpenBurnRateModeling?.(incident)}
@@ -310,11 +365,18 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
                   <button
                     id="overview-launch-drone-btn"
-                    onClick={() => onOpenDroneSimulation?.(incident)}
+                    onClick={() => {
+                      checkAndExecute(
+                        currentLang === 'ar' ? 'استطلاع الدرون التكتيكي' : 'Airborne Drone Reconnaissance',
+                        'FieldUnit',
+                        () => onOpenDroneSimulation?.(incident)
+                      );
+                    }}
                     className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-950/40 whitespace-nowrap self-start sm:self-auto"
                   >
                     <Camera className="w-3.5 h-3.5" />
                     <span>{currentLang === 'ar' ? 'فتح محاكاة قمرة الدرون' : 'Launch Drone Simulator'}</span>
+                    {!permissions.canAccessDroneRecon && <Lock className="w-3 h-3 text-amber-300 ml-1" />}
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -452,17 +514,14 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
 
                         <button
                           onClick={() => {
-                            onDispatchResource(incident.id, rec.resource.id);
-                            setActionSuccessMessage(
-                              currentLang === 'ar'
-                                ? `تم إرسال ${rec.resource.code} نحو موقع الحريق. زمن الوصول المقدر: ${rec.estimatedTravelTimeMinutes} دقيقة.`
-                                : `Dispatched unit ${rec.resource.code}. Estimated travel time: ${rec.estimatedTravelTimeMinutes} min.`
-                            );
+                            handleDispatchUnit(rec.resource.id, rec.resource.code, rec.estimatedTravelTimeMinutes);
                           }}
                           disabled={isAssigned}
                           className={`w-full py-1.5 rounded-lg font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 ${
                             isAssigned
                               ? 'bg-emerald-700/40 text-emerald-300 cursor-default'
+                              : !permissions.canDispatchResources
+                              ? 'bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-500/40'
                               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
                           }`}
                         >
@@ -473,8 +532,16 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                             </>
                           ) : (
                             <>
-                              <Send className="w-3.5 h-3.5" />
-                              <span>{currentLang === 'ar' ? 'إرسال الوحدة' : 'Deploy Unit'}</span>
+                              {!permissions.canDispatchResources ? (
+                                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                              ) : (
+                                <Send className="w-3.5 h-3.5" />
+                              )}
+                              <span>
+                                {!permissions.canDispatchResources
+                                  ? (currentLang === 'ar' ? 'يتطلب تفويض القيادة L3' : 'Command Auth Required')
+                                  : (currentLang === 'ar' ? 'إرسال الوحدة' : 'Deploy Unit')}
+                              </span>
                             </>
                           )}
                         </button>
@@ -798,8 +865,8 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
               </div>
 
               <div className="space-y-3">
-                {incident.detectionSources.map((sig) => (
-                  <div key={sig.id} className="p-3.5 rounded-xl bg-slate-800/70 border border-slate-700 flex flex-col gap-2">
+                {incident.detectionSources.map((sig, idx) => (
+                  <div key={`det-sig-${sig.id}-${idx}`} className="p-3.5 rounded-xl bg-slate-800/70 border border-slate-700 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         {sig.source.includes('satellite') ? (
@@ -1023,21 +1090,25 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                         </div>
                         <button
                           onClick={() => {
-                            onDispatchResource(incident.id, res.id);
-                            setActionSuccessMessage(
-                              currentLang === 'ar'
-                                ? `تم إرسال ${res.code} نحو موقع الحريق.`
-                                : `Dispatched unit ${res.code}. ETA: ${travelTimeMinutes} min.`
-                            );
+                            handleDispatchUnit(res.id, res.code, travelTimeMinutes);
                           }}
                           disabled={isAssigned}
-                          className={`px-3 py-1.5 rounded-lg font-bold text-xs cursor-pointer transition shrink-0 ml-2 ${
+                          className={`px-3 py-1.5 rounded-lg font-bold text-xs cursor-pointer transition shrink-0 ml-2 flex items-center gap-1.5 ${
                             isAssigned
                               ? 'bg-emerald-700/50 text-emerald-200 cursor-default'
+                              : !permissions.canDispatchResources
+                              ? 'bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-500/40'
                               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
                           }`}
                         >
-                          {isAssigned ? (currentLang === 'ar' ? 'تم الإرسال' : 'Dispatched') : (currentLang === 'ar' ? 'إرسال' : 'Deploy')}
+                          {isAssigned ? (
+                            (currentLang === 'ar' ? 'تم الإرسال' : 'Dispatched')
+                          ) : (
+                            <>
+                              {!permissions.canDispatchResources && <Lock className="w-3 h-3 text-amber-400" />}
+                              <span>{currentLang === 'ar' ? 'إرسال' : 'Deploy'}</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     );
@@ -1072,17 +1143,38 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <button
                   onClick={handleConfirm}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition cursor-pointer"
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition cursor-pointer ${
+                    permissions.canConfirmRejectIncidents
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
+                  }`}
                 >
-                  <CheckCircle2 className="w-4 h-4" />
+                  {permissions.canConfirmRejectIncidents ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <Lock className="w-4 h-4 text-amber-400" />
+                  )}
                   <span>{t.verifyIncident}</span>
+                  {!permissions.canConfirmRejectIncidents && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300">
+                      L3 Required
+                    </span>
+                  )}
                 </button>
 
                 <button
                   onClick={handleReject}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-700 text-xs font-bold transition cursor-pointer"
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    permissions.canConfirmRejectIncidents
+                      ? 'bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-700'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700'
+                  }`}
                 >
-                  <XCircle className="w-4 h-4" />
+                  {permissions.canConfirmRejectIncidents ? (
+                    <XCircle className="w-4 h-4" />
+                  ) : (
+                    <Lock className="w-4 h-4 text-slate-500" />
+                  )}
                   <span>{t.rejectFalseAlarm}</span>
                 </button>
               </div>

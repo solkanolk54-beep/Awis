@@ -85,8 +85,16 @@ export const CitizenReportingModal: React.FC<CitizenReportingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-md bg-slate-900 border border-amber-500/40 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+    <div 
+      id="citizen-reporting-modal-backdrop"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto cursor-pointer"
+    >
+      <div 
+        id="citizen-reporting-modal-content"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-md bg-slate-900 border border-amber-500/40 rounded-3xl shadow-2xl overflow-hidden flex flex-col cursor-default"
+      >
         {/* Mobile Style Header */}
         <div className="p-4 bg-gradient-to-r from-amber-600 via-red-600 to-amber-700 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">

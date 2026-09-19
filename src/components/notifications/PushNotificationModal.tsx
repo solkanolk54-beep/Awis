@@ -142,10 +142,16 @@ export const PushNotificationModal: React.FC<PushNotificationModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+      id="push-notification-modal-backdrop"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
       dir={isAr ? 'rtl' : 'ltr'}
     >
-      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+      <div 
+        id="push-notification-modal-content"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-2xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] cursor-default"
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/60 border-b border-slate-800">
           <div className="flex items-center gap-2.5">

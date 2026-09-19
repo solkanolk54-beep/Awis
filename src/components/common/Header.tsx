@@ -20,11 +20,16 @@ import {
   Bell,
   BellRing,
   Camera,
-  Satellite
+  Satellite,
+  Cloud,
+  ShieldCheck,
+  Lock,
+  KeyRound
 } from 'lucide-react';
 import { Language, UserRole } from '../../types';
 import { translations } from '../../i18n/translations';
 import { OfflineCacheStats } from '../../services/offlineCacheService';
+import { useRBAC } from '../../context/RBACContext';
 
 interface HeaderProps {
   currentLang: Language;
@@ -43,12 +48,14 @@ interface HeaderProps {
   onOpenDroneSimulation?: () => void;
   onOpenBurnRateModeling?: () => void;
   onOpenSatelliteUplink?: () => void;
+  onOpenEvacuationAlert?: () => void;
   isOnline?: boolean;
   isSimulatedOffline?: boolean;
   onOpenOfflineManager?: () => void;
   offlineStats?: OfflineCacheStats | null;
   onOpenNotifications?: () => void;
   notificationPermission?: NotificationPermission;
+  isCloudSyncActive?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -68,14 +75,24 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDroneSimulation,
   onOpenBurnRateModeling,
   onOpenSatelliteUplink,
+  onOpenEvacuationAlert,
   isOnline = true,
   isSimulatedOffline = false,
   onOpenOfflineManager,
   offlineStats,
   onOpenNotifications,
-  notificationPermission = 'default'
+  notificationPermission = 'default',
+  isCloudSyncActive = true
 }) => {
   const t = translations[currentLang];
+  const {
+    role,
+    userProfile,
+    permissions,
+    setIsAuthModalOpen,
+    switchRole,
+    checkAndExecute
+  } = useRBAC();
   const [timeStr, setTimeStr] = useState('');
 
   useEffect(() => {
@@ -87,6 +104,17 @@ export const Header: React.FC<HeaderProps> = ({
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleRoleSelect = (roleVal: UserRole) => {
+    onRoleChange?.(roleVal);
+    if (roleVal === 'citizen') {
+      switchRole('Citizen');
+    } else if (roleVal === 'field_team' || roleVal === 'forestry_expert') {
+      switchRole('FieldUnit');
+    } else {
+      switchRole('CentralCommand');
+    }
+  };
 
   const rolesList: { id: UserRole; label: string }[] = [
     { id: 'national_command', label: t.roleNationalCommand },
@@ -114,11 +142,18 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={onOpenSimulation}
+            onClick={() => {
+              checkAndExecute(
+                currentLang === 'ar' ? 'محاكي السيناريوهات التكتيكية' : 'Emergency Scenario Simulation',
+                'CentralCommand',
+                () => onOpenSimulation?.()
+              );
+            }}
             className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 transition cursor-pointer text-xs"
           >
             <PlayCircle className="w-3.5 h-3.5 text-amber-400" />
             <span>{t.simulateDemo}</span>
+            {!permissions.canTriggerSimulations && <Lock className="w-3 h-3 text-amber-400 ml-0.5" />}
             {isSimulating && (
               <span className="bg-amber-500 text-black px-1 rounded text-[10px] font-bold">
                 T+{simulationStep}m
@@ -194,6 +229,32 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Firestore Cloud Sync Status */}
+          <div
+            className={`hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
+              isCloudSyncActive
+                ? 'bg-sky-950/60 border-sky-500/40 text-sky-300'
+                : 'bg-slate-900/90 border-slate-700/80 text-slate-400'
+            }`}
+            title={
+              isCloudSyncActive
+                ? (currentLang === 'ar' ? 'سحابة Firestore متزامنة مع وضع استمرارية التخزين المحلي IndexedDB' : 'Firestore Cloud Synchronized (IndexedDB Persistence Active)')
+                : (currentLang === 'ar' ? 'جار الاتصال بقاعدة بيانات Firestore...' : 'Connecting to Firestore Cloud...')
+            }
+          >
+            <Cloud className={`w-3.5 h-3.5 ${isCloudSyncActive ? 'text-sky-400' : 'text-slate-500'}`} />
+            <span className="font-mono text-[11px]">
+              {isCloudSyncActive
+                ? (currentLang === 'ar' ? 'سحابة متصلة' : 'Cloud Sync')
+                : (currentLang === 'ar' ? 'سحابة محلية' : 'Cloud Standby')}
+            </span>
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isCloudSyncActive ? 'bg-sky-400 animate-pulse' : 'bg-slate-500'
+              }`}
+            />
+          </div>
+
           {/* Browser Push Notifications Button */}
           {onOpenNotifications && (
             <button
@@ -223,13 +284,45 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Firebase RBAC Identity & Clearance Tier Badge */}
+          <button
+            id="header-rbac-auth-btn"
+            onClick={() => setIsAuthModalOpen(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition cursor-pointer shadow-sm ${
+              role === 'CentralCommand'
+                ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300 hover:bg-emerald-900/60'
+                : role === 'FieldUnit'
+                ? 'bg-blue-950/80 border-blue-500/60 text-blue-300 hover:bg-blue-900/60'
+                : 'bg-amber-950/80 border-amber-500/60 text-amber-300 hover:bg-amber-900/60'
+            }`}
+            title={
+              currentLang === 'ar'
+                ? `رتبة الوصول وتفويض Firebase: ${role} (L${userProfile?.clearanceLevel || (role === 'CentralCommand' ? 3 : role === 'FieldUnit' ? 2 : 1)}) - انقر لتغيير الرتبة أو تسجيل الدخول`
+                : `Firebase RBAC Tier: ${role} (L${userProfile?.clearanceLevel || (role === 'CentralCommand' ? 3 : role === 'FieldUnit' ? 2 : 1)}) - Click to switch role or sign in`
+            }
+          >
+            <ShieldCheck className={`w-3.5 h-3.5 ${role === 'CentralCommand' ? 'text-emerald-400' : role === 'FieldUnit' ? 'text-blue-400' : 'text-amber-400'}`} />
+            <div className="flex items-center gap-1 font-mono">
+              <span className="font-bold">
+                {role === 'CentralCommand'
+                  ? (currentLang === 'ar' ? 'القيادة المركزية' : 'Central Command')
+                  : role === 'FieldUnit'
+                  ? (currentLang === 'ar' ? 'الوحدة الميدانية' : 'Field Unit')
+                  : (currentLang === 'ar' ? 'المواطن' : 'Citizen')}
+              </span>
+              <span className="text-[10px] px-1 py-0.2 rounded bg-black/50 border border-white/10 font-bold">
+                L{role === 'CentralCommand' ? 3 : role === 'FieldUnit' ? 2 : 1}
+              </span>
+            </div>
+          </button>
+
           {/* Active Role Selector */}
           <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs text-slate-300">
             <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-slate-400 hidden sm:inline">{t.activeRole}:</span>
             <select
               value={currentRole}
-              onChange={(e) => onRoleChange(e.target.value as UserRole)}
+              onChange={(e) => handleRoleSelect(e.target.value as UserRole)}
               className="bg-transparent text-emerald-300 font-semibold focus:outline-none cursor-pointer pr-1"
             >
               {rolesList.map((r) => (
@@ -332,8 +425,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         <button
           onClick={() => {
-            onTabChange('fieldOps');
-            onOpenFieldOps?.();
+            checkAndExecute(
+              currentLang === 'ar' ? 'شاشة العمليات الميدانية للرتل' : 'Field Operations Terminal',
+              'FieldUnit',
+              () => {
+                onTabChange('fieldOps');
+                onOpenFieldOps?.();
+              }
+            );
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'fieldOps'
@@ -343,12 +442,19 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Activity className="w-3.5 h-3.5 text-blue-400" />
           <span>{t.navFieldOps}</span>
+          {!permissions.canAccessFieldOps && <Lock className="w-3 h-3 text-slate-500" />}
         </button>
 
         <button
           onClick={() => {
-            onTabChange('analytics');
-            onOpenAnalytics?.();
+            checkAndExecute(
+              currentLang === 'ar' ? 'التحليلات والاستخبارات الوطنية' : 'National Analytics Intelligence',
+              'CentralCommand',
+              () => {
+                onTabChange('analytics');
+                onOpenAnalytics?.();
+              }
+            );
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'analytics'
@@ -358,12 +464,19 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
           <span>{t.navAnalytics}</span>
+          {!permissions.canAccessAnalytics && <Lock className="w-3 h-3 text-slate-500" />}
         </button>
 
         <button
           onClick={() => {
-            onTabChange('postFire');
-            onOpenPostFireReport?.();
+            checkAndExecute(
+              currentLang === 'ar' ? 'التقرير الاستخباراتي بعد الحريق' : 'Official Post-Fire Report',
+              'CentralCommand',
+              () => {
+                onTabChange('postFire');
+                onOpenPostFireReport?.();
+              }
+            );
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer ${
             activeTab === 'postFire'
@@ -373,6 +486,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <FileText className="w-3.5 h-3.5 text-slate-300" />
           <span>{t.navPostFire}</span>
+          {!permissions.canAccessPostFireReports && <Lock className="w-3 h-3 text-slate-500" />}
         </button>
 
         {onOpenSatelliteUplink && (
@@ -393,9 +507,39 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
+        {onOpenEvacuationAlert && (
+          <button
+            id="btn-header-evacuation-sms"
+            onClick={() => {
+              checkAndExecute(
+                currentLang === 'ar' ? 'بث إنذار الإخلاء الخلوي للطوارئ' : 'Emergency Evacuation Cell Broadcast',
+                'CentralCommand',
+                () => onOpenEvacuationAlert?.()
+              );
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-red-200 hover:text-white hover:bg-red-900/80 border border-red-500/50 bg-red-950/60 shadow-sm"
+            title={currentLang === 'ar' ? 'بث تحذيرات الإخلاء الطارئ عبر شبكات الهاتف النقال (Mobilis • Djezzy • Ooredoo)' : 'Emergency Evacuation Cell Broadcast Gateway (Mobilis • Djezzy • Ooredoo)'}
+          >
+            <Radio className="w-3.5 h-3.5 text-red-400 animate-pulse" />
+            <span className="font-bold text-red-300">
+              {currentLang === 'ar' ? 'بث الإخلاء (SMS)' : 'Evac SMS/CB'}
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 font-mono font-bold">
+              PRIORITY: HIGH
+            </span>
+            {!permissions.canDispatchResources && <Lock className="w-3 h-3 text-red-400 ml-0.5" />}
+          </button>
+        )}
+
         {onOpenBurnRateModeling && (
           <button
-            onClick={onOpenBurnRateModeling}
+            onClick={() => {
+              checkAndExecute(
+                currentLang === 'ar' ? 'نمذجة سرعة احتراق الغابات D3' : 'D3 Predictive Burn-Rate Modeling',
+                'FieldUnit',
+                () => onOpenBurnRateModeling?.()
+              );
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-orange-300 hover:bg-slate-800/60 border border-orange-500/30 bg-orange-950/40 ml-auto"
             title="D3 Predictive Burn-Rate Modeling (6h, 12h, 24h Fire Spread Projections)"
           >
@@ -403,6 +547,7 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="font-semibold text-orange-300">
               {currentLang === 'ar' ? 'نمذجة الاحتراق (D3)' : 'D3 Burn-Rate'}
             </span>
+            {!permissions.canAccessDroneRecon && <Lock className="w-3 h-3 text-orange-400 ml-0.5" />}
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40 font-mono font-bold">
               6h/12h/24h
             </span>
@@ -411,7 +556,13 @@ export const Header: React.FC<HeaderProps> = ({
 
         {onOpenDroneSimulation && (
           <button
-            onClick={onOpenDroneSimulation}
+            onClick={() => {
+              checkAndExecute(
+                currentLang === 'ar' ? 'استطلاع الدرون التكتيكي' : 'Airborne Drone Reconnaissance',
+                'FieldUnit',
+                () => onOpenDroneSimulation?.()
+              );
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition cursor-pointer text-slate-300 hover:text-emerald-300 hover:bg-slate-800/60 border border-emerald-500/20 bg-emerald-950/30 ${onOpenBurnRateModeling ? '' : 'ml-auto'}`}
             title="Airborne Drone Reconnaissance Cockpit & Dual Camera Simulator"
           >
@@ -419,6 +570,7 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="font-semibold text-emerald-300">
               {currentLang === 'ar' ? 'استطلاع الدرون (Recon)' : 'Drone Recon'}
             </span>
+            {!permissions.canAccessDroneRecon && <Lock className="w-3 h-3 text-emerald-400 ml-0.5" />}
             <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
               FLIR / RGB

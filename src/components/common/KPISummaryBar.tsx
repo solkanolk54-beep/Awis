@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Flame, 
   Trees, 
@@ -7,6 +7,7 @@ import {
   AlertTriangle, 
   Wind, 
   ShieldAlert, 
+  ShieldCheck,
   Activity,
   TrendingUp,
   TrendingDown,
@@ -18,14 +19,22 @@ import {
   RadioTower,
   Gauge,
   WifiOff,
-  HardDrive
+  HardDrive,
+  HeartPulse,
+  Eye,
+  AlertOctagon,
+  Compass
 } from 'lucide-react';
-import { WildfireIncident, ForestZone, EmergencyResource, Language } from '../../types';
+import { WildfireIncident, ForestZone, EmergencyResource, Language, RiskLevel } from '../../types';
 import { translations } from '../../i18n/translations';
 import { MiniSparkline } from './MiniSparkline';
 import { LiveWeatherData } from '../../services/liveWeatherService';
 import { UserLivePosition } from '../../services/liveGeolocationService';
 import { OfflineCacheStats } from '../../services/offlineCacheService';
+import { 
+  fetchLiveAirQuality, 
+  AirQualityData 
+} from '../../services/airQualityService';
 import { 
   get24HourFireRiskTrend, 
   get24HourActiveFiresTrend, 
@@ -46,6 +55,10 @@ interface KPISummaryBarProps {
   isSimulatedOffline?: boolean;
   onOpenOfflineManager?: () => void;
   offlineStats?: OfflineCacheStats | null;
+  selectedIncident?: WildfireIncident | null;
+  isCollapsible?: boolean;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
@@ -60,7 +73,11 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
   isOnline = true,
   isSimulatedOffline = false,
   onOpenOfflineManager,
-  offlineStats
+  offlineStats,
+  selectedIncident,
+  isCollapsible = true,
+  isCollapsed = false,
+  onToggleCollapse
 }) => {
   const t = translations[currentLang];
 
@@ -68,11 +85,113 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
   const [scenario, setScenario] = useState<'accelerating' | 'subsiding'>('accelerating');
   const [showExpandedTrajectory, setShowExpandedTrajectory] = useState<boolean>(false);
 
+  // Real-Time Air Quality & Emergency Crew Smoke Inhalation State
+  const [airQuality, setAirQuality] = useState<AirQualityData | null>(null);
+  const [isAqiLoading, setIsAqiLoading] = useState<boolean>(false);
+  const [showAqiDetail, setShowAqiDetail] = useState<boolean>(false);
+  const [selectedAqiSectorId, setSelectedAqiSectorId] = useState<string>('active');
+
   // Compute live 24-hour trend profiles
   const fireRiskTrend = useMemo(() => get24HourFireRiskTrend(scenario), [scenario]);
   const activeFiresTrend = useMemo(() => get24HourActiveFiresTrend(scenario), [scenario]);
   const forestZonesTrend = useMemo(() => get24HourForestZonesTrend(scenario), [scenario]);
   const fleetTrend = useMemo(() => get24HourFleetMobilizationTrend(scenario), [scenario]);
+
+  const activeIncident = selectedIncident || incidents.find((i) => i.status !== 'extinguished') || incidents[0];
+
+  // Preset Wilaya Fire-Prone Hotspots for quick AQI analysis across Algeria's high-risk sectors
+  const aqiPresets = useMemo(() => [
+    {
+      id: 'active',
+      nameEn: activeIncident ? `Active: ${activeIncident.title}` : 'Active Incident Line',
+      nameAr: activeIncident ? `النشط: ${activeIncident.titleAr}` : 'بؤرة الحريق النشطة',
+      nameFr: activeIncident ? `Actif: ${activeIncident.title}` : 'Front Actif',
+      lat: activeIncident?.coordinates.lat ?? 36.784,
+      lng: activeIncident?.coordinates.lng ?? 5.719,
+      risk: activeIncident?.riskLevel ?? ('critical' as RiskLevel),
+      frp: activeIncident?.confidenceScore ? Math.round(activeIncident.confidenceScore * 0.9) : 55
+    },
+    {
+      id: 'tizi_ouzou',
+      nameEn: 'Tizi Ouzou (Yakouren Massif)',
+      nameAr: 'تيزي وزو (كتلة يعكورن الغابية)',
+      nameFr: 'Tizi Ouzou (Massif de Yakouren)',
+      lat: 36.73,
+      lng: 4.41,
+      risk: 'critical' as RiskLevel,
+      frp: 70
+    },
+    {
+      id: 'bejaia',
+      nameEn: 'Béjaïa (Akfadou / Gouraya)',
+      nameAr: 'بجاية (أكفادو / قورايا)',
+      nameFr: 'Béjaïa (Akfadou / Gouraya)',
+      lat: 36.75,
+      lng: 5.05,
+      risk: 'extreme' as RiskLevel,
+      frp: 65
+    },
+    {
+      id: 'jijel',
+      nameEn: 'Jijel (Guerrouche / Texanna)',
+      nameAr: 'جيجل (غابة قرّوش / تاكسنة)',
+      nameFr: 'Jijel (Guerrouche / Texanna)',
+      lat: 36.80,
+      lng: 5.76,
+      risk: 'high' as RiskLevel,
+      frp: 48
+    },
+    {
+      id: 'el_tarf',
+      nameEn: 'El Tarf (El Kala Reserve)',
+      nameAr: 'الطارف (محمية القالة الوطنية)',
+      nameFr: 'El Tarf (Parc National d\'El Kala)',
+      lat: 36.89,
+      lng: 8.44,
+      risk: 'high' as RiskLevel,
+      frp: 40
+    },
+    {
+      id: 'blida',
+      nameEn: 'Blida (Chréa Cedar Forest)',
+      nameAr: 'البليدة (غابة أرز الشريعة)',
+      nameFr: 'Blida (Cèdres de Chréa)',
+      lat: 36.42,
+      lng: 2.88,
+      risk: 'moderate' as RiskLevel,
+      frp: 25
+    }
+  ], [activeIncident]);
+
+  // Load Air Quality Telemetry via Secondary Service
+  const loadAirQualityData = async (presetId = selectedAqiSectorId) => {
+    setIsAqiLoading(true);
+    try {
+      const preset = aqiPresets.find((p) => p.id === presetId) || aqiPresets[0];
+      const locName = currentLang === 'ar' ? preset.nameAr : currentLang === 'fr' ? preset.nameFr : preset.nameEn;
+      
+      const data = await fetchLiveAirQuality(preset.lat, preset.lng, {
+        locationName: locName,
+        incidentRisk: preset.risk,
+        fireFrpMw: preset.frp,
+        incidentStatus: preset.id === 'active' ? activeIncident?.status : 'active'
+      });
+      setAirQuality(data);
+    } catch (err) {
+      console.warn('Failed to load live air quality telemetry:', err);
+    } finally {
+      setIsAqiLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAirQualityData(selectedAqiSectorId);
+  }, [selectedAqiSectorId, activeIncident?.id, isOnline]);
+
+  const handleSelectSector = (sectorId: string) => {
+    setSelectedAqiSectorId(sectorId);
+    loadAirQualityData(sectorId);
+  };
 
   const activeCount = scenario === 'accelerating'
     ? incidents.filter((i) => i.status !== 'extinguished').length
@@ -91,6 +210,67 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
     : Math.max(1, Math.round(resources.length * 0.3));
 
   const isAccelerating = fireRiskTrend.status === 'accelerating';
+
+  // Compact Minimal Collapsed Bar (Allows full GIS Map visibility)
+  if (isCollapsed) {
+    return (
+      <div 
+        id="kpi-summary-collapsed"
+        className="w-full bg-slate-900/95 border border-slate-800 rounded-xl px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs shadow-md transition-all duration-200"
+        dir={currentLang === 'ar' ? 'rtl' : 'ltr'}
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-white font-bold">
+            <Flame className="w-4 h-4 text-red-500 animate-pulse" />
+            <span>{currentLang === 'ar' ? 'حرائق نشطة:' : 'Active Fires:'}</span>
+            <span className="font-mono text-red-400 font-bold">{activeCount}</span>
+            {criticalCount > 0 && (
+              <span className="text-[10px] text-red-300 font-sans font-bold">({criticalCount} {currentLang === 'ar' ? 'حرجة' : 'Critical'})</span>
+            )}
+          </div>
+          <span className="text-slate-700">|</span>
+          <div className="flex items-center gap-1.5 text-slate-300">
+            <span className="text-slate-400">{currentLang === 'ar' ? 'مؤشر الخطر:' : 'Risk Index:'}</span>
+            <span className={`font-mono font-bold ${isAccelerating ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {fireRiskTrend.currentValue}/100
+            </span>
+          </div>
+          <span className="text-slate-700 hidden sm:inline">|</span>
+          <div className="hidden sm:flex items-center gap-1.5 text-slate-300">
+            <Trees className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-slate-400">{currentLang === 'ar' ? 'غابات مهددة:' : 'Danger Zones:'}</span>
+            <span className="font-mono font-bold text-amber-300">{highRiskForests}/{forests.length}</span>
+          </div>
+          <span className="text-slate-700 hidden md:inline">|</span>
+          <div className="hidden md:flex items-center gap-1.5 text-slate-300">
+            <Truck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-slate-400">{currentLang === 'ar' ? 'الوحدات الميدانية:' : 'Fleet:'}</span>
+            <span className="font-mono font-bold text-emerald-300">{deployedResources}/{resources.length}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Weather compact badge */}
+          <div className="hidden lg:flex items-center gap-1.5 font-mono text-[11px] text-slate-300 bg-slate-950/70 px-2 py-0.5 rounded border border-slate-800">
+            <Wind className="w-3 h-3 text-sky-400" />
+            <span>{liveWeather?.windSpeedKmH ?? 42} km/h {liveWeather?.windDirectionCardinal ?? 'NE'}</span>
+            <span className="text-red-400 font-bold ml-1">{liveWeather?.temperatureC ?? 40.5}°C</span>
+          </div>
+
+          {onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-semibold transition cursor-pointer"
+              title={currentLang === 'ar' ? 'توسيع لوحة المؤشرات الكاملة' : 'Expand full KPI dashboard'}
+            >
+              <span>{currentLang === 'ar' ? 'عرض المؤشرات الكاملة' : 'Expand KPI Panel'}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
@@ -162,7 +342,309 @@ export const KPISummaryBar: React.FC<KPISummaryBarProps> = ({
               <RefreshCw className={`w-3.5 h-3.5 ${isWeatherLoading ? 'animate-spin text-amber-400' : ''}`} />
             </button>
           )}
+          {onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-[11px] font-medium transition cursor-pointer ml-1"
+              title={currentLang === 'ar' ? 'طي لوحة المؤشرات لتوسيع مساحة الخريطة' : 'Collapse KPI panel to maximize map space'}
+            >
+              <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">{currentLang === 'ar' ? 'طي' : 'Collapse'}</span>
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* Real-Time Air Quality Index (AQI) & Wildfire Smoke Inhalation Risk Ribbon */}
+      <div 
+        id="kpi-aqi-smoke-inhalation-banner"
+        className={`w-full rounded-xl border px-3.5 py-2 flex flex-col gap-2.5 shadow-md transition-all duration-300 ${
+          airQuality?.smokeAssessment.badgeBg ?? 'bg-slate-900/90'
+        } ${
+          airQuality?.smokeAssessment.badgeBorder ?? 'border-slate-800'
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Left: Active Incident Region & AQI Status */}
+          <div className="flex flex-wrap items-center gap-2.5 min-w-[280px]">
+            {/* Real-Time Source Indicator */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] font-bold text-slate-300">
+              <span className={`w-2 h-2 rounded-full ${airQuality?.isRealTime ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span>{airQuality?.isRealTime ? 'OPEN-METEO AQI LIVE' : 'PLUME TELEMETRY MODEL'}</span>
+            </div>
+
+            {/* US AQI Metric Badge */}
+            <div 
+              className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg border font-mono font-bold text-xs"
+              style={{
+                borderColor: airQuality?.smokeAssessment.color ?? '#f59e0b',
+                backgroundColor: `${airQuality?.smokeAssessment.color ?? '#f59e0b'}20`,
+                color: airQuality?.smokeAssessment.color ?? '#f59e0b'
+              }}
+            >
+              <HeartPulse className="w-3.5 h-3.5 animate-pulse" />
+              <span>AQI {airQuality?.usAqi ?? 145}</span>
+              <span className="text-[11px] font-sans font-semibold">
+                • {currentLang === 'ar' 
+                    ? airQuality?.smokeAssessment.labelAr 
+                    : currentLang === 'fr' 
+                      ? airQuality?.smokeAssessment.labelFr 
+                      : airQuality?.smokeAssessment.labelEn}
+              </span>
+            </div>
+
+            {/* Monitored Incident Sector */}
+            <span className="text-slate-300 font-medium text-[11px] flex items-center gap-1 truncate">
+              <Compass className="w-3 h-3 text-sky-400 shrink-0" />
+              <span className="text-slate-400">{currentLang === 'ar' ? 'القطاع الميداني:' : 'Incident Sector:'}</span>
+              <span className="text-white font-semibold">{airQuality?.locationName}</span>
+              {airQuality?.firePlumeAdjusted && (
+                <span className="px-1.5 py-0.2 rounded bg-red-950/80 text-red-400 text-[9px] font-bold border border-red-800/60 ml-1">
+                  {currentLang === 'ar' ? 'تأثير مباشر لدخان النيران' : 'Direct Plume Impact'}
+                </span>
+              )}
+            </span>
+          </div>
+
+          {/* Right: Particulate Metrics (PM2.5, PM10, CO) & Controls */}
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-slate-200 shrink-0">
+            {/* PM2.5 (Fine Pulmonary Particulates) */}
+            <div 
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950/70 border border-slate-800"
+              title={currentLang === 'ar' ? 'الجسيمات الدقيقة القابلة للاستنشاق الرئوي العميق (PM2.5)' : 'Fine Inhalable Particulate Matter (PM2.5)'}
+            >
+              <span className="text-slate-400 font-sans text-[10px]">PM2.5:</span>
+              <span className="font-bold text-amber-300">{airQuality?.pm25 ?? 64.2}</span>
+              <span className="text-[9px] text-slate-400">µg/m³</span>
+            </div>
+
+            {/* PM10 (Ash, Soot & Coarse Particulates) */}
+            <div 
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950/70 border border-slate-800"
+              title={currentLang === 'ar' ? 'الرماد والسخام المعلق (PM10)' : 'Coarse Ash & Soot Particles (PM10)'}
+            >
+              <span className="text-slate-400 font-sans text-[10px]">PM10:</span>
+              <span className="font-bold text-sky-300">{airQuality?.pm10 ?? 112.5}</span>
+              <span className="text-[9px] text-slate-400">µg/m³</span>
+            </div>
+
+            {/* CO (Carbon Monoxide) */}
+            <div 
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950/70 border border-slate-800"
+              title={currentLang === 'ar' ? 'غاز أول أكسيد الكربون الناتج عن احتراق الغابات (CO)' : 'Carbon Monoxide Concentration from Biomass Combustion (CO)'}
+            >
+              <span className="text-slate-400 font-sans text-[10px]">CO:</span>
+              <span className={`font-bold ${(airQuality?.carbonMonoxidePpm ?? 0) > 15 ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>
+                {airQuality?.carbonMonoxidePpm ?? 8.4}
+              </span>
+              <span className="text-[9px] text-slate-400">ppm</span>
+            </div>
+
+            {/* Crew PPE Tactical Quick Pill */}
+            <div 
+              className="hidden lg:flex items-center gap-1 px-2.5 py-0.5 rounded-md border text-[10px] font-sans font-bold"
+              style={{
+                borderColor: airQuality?.smokeAssessment.color ?? '#f59e0b',
+                color: airQuality?.smokeAssessment.textColor ?? 'text-amber-300',
+                backgroundColor: 'rgba(0,0,0,0.4)'
+              }}
+            >
+              <ShieldAlert className="w-3 h-3 shrink-0" />
+              <span className="truncate max-w-[220px]">
+                {currentLang === 'ar' 
+                  ? airQuality?.smokeAssessment.recommendedPpeAr.split('.')[0] 
+                  : currentLang === 'fr' 
+                    ? airQuality?.smokeAssessment.recommendedPpeFr.split('.')[0] 
+                    : airQuality?.smokeAssessment.recommendedPpeEn.split('.')[0]}
+              </span>
+            </div>
+
+            {/* Toggle Full Smoke Protocol Inspector */}
+            <button
+              onClick={() => setShowAqiDetail(!showAqiDetail)}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-sans font-medium transition cursor-pointer"
+            >
+              <Eye className="w-3 h-3 text-sky-400" />
+              <span>{showAqiDetail ? (currentLang === 'ar' ? 'إخفاء البروتوكول' : 'Hide Protocol') : (currentLang === 'ar' ? 'بروتوكول السلامة والتنفس' : 'Smoke Safety Protocol')}</span>
+              {showAqiDetail ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+
+            {/* Refresh Live AQI Telemetry */}
+            <button
+              onClick={() => loadAirQualityData(selectedAqiSectorId)}
+              disabled={isAqiLoading}
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              title={currentLang === 'ar' ? 'تحديث جودة الهواء الآن' : 'Refresh live air quality now'}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isAqiLoading ? 'animate-spin text-sky-400' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Deep-Dive: Emergency Crew Smoke Inhalation Risk Assessment & Health Protocol */}
+        {showAqiDetail && airQuality && (
+          <div className="mt-1 pt-3 border-t border-slate-800/80 space-y-3 animate-in fade-in duration-200">
+            {/* Sector Quick Switcher */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-1.5 text-slate-400 font-medium">
+                <Compass className="w-3.5 h-3.5 text-sky-400" />
+                <span>{currentLang === 'ar' ? 'اختر قطاع الغابات لمراقبة جودة الهواء والدخان:' : 'Select Wildfire Sector for Air Quality & Smoke Telemetry:'}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {aqiPresets.map((preset) => {
+                  const isSelected = selectedAqiSectorId === preset.id;
+                  const label = currentLang === 'ar' ? preset.nameAr : currentLang === 'fr' ? preset.nameFr : preset.nameEn;
+                  return (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleSelectSector(preset.id)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition cursor-pointer border ${
+                        isSelected 
+                          ? 'bg-sky-600 text-white border-sky-400 shadow-sm' 
+                          : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Tactical Protocol Cards Grid (4 Columns) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: Respiratory Protection (PPE) */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex flex-col justify-between space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>{currentLang === 'ar' ? 'معدات الوقاية التنفسية (PPE)' : 'Respiratory Protection (PPE)'}</span>
+                </div>
+                <p className="text-slate-200 text-xs leading-relaxed">
+                  {currentLang === 'ar' 
+                    ? airQuality.smokeAssessment.recommendedPpeAr 
+                    : currentLang === 'fr' 
+                      ? airQuality.smokeAssessment.recommendedPpeFr 
+                      : airQuality.smokeAssessment.recommendedPpeEn}
+                </p>
+                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-900 flex items-center justify-between">
+                  <span>{currentLang === 'ar' ? 'المعيار: الحماية المدنية' : 'Standard: Protection Civile'}</span>
+                  <span className="font-mono text-amber-300">PM2.5: {airQuality.pm25} µg/m³</span>
+                </div>
+              </div>
+
+              {/* Card 2: Crew Exposure Limit & Shift Rotation */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex flex-col justify-between space-y-2">
+                <div className="flex items-center gap-2 text-sky-400 font-bold text-xs">
+                  <Clock className="w-4 h-4 shrink-0" />
+                  <span>{currentLang === 'ar' ? 'أقصى مدة بقاء وتناوب الفرق' : 'Shift & Frontline Exposure'}</span>
+                </div>
+                <p className="text-slate-200 text-xs leading-relaxed">
+                  {currentLang === 'ar' 
+                    ? airQuality.smokeAssessment.maxCrewExposureAr 
+                    : currentLang === 'fr' 
+                      ? airQuality.smokeAssessment.maxCrewExposureFr 
+                      : airQuality.smokeAssessment.maxCrewExposureEn}
+                </p>
+                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-900 flex items-center justify-between">
+                  <span>{currentLang === 'ar' ? 'حالة التناوب الإلزامي' : 'Crew Rotation Status'}</span>
+                  <span className="font-bold text-sky-300">
+                    {airQuality.usAqi > 200 ? (currentLang === 'ar' ? 'عاجل < 30 د' : 'Urgent < 30m') : (currentLang === 'ar' ? 'عادي 60-90 د' : 'Normal 60-90m')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 3: Tactical Operations & Smoke Plume Advisory */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex flex-col justify-between space-y-2">
+                <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                  <Wind className="w-4 h-4 shrink-0" />
+                  <span>{currentLang === 'ar' ? 'توجيهات العمليات وحركة الدخان' : 'Plume Behavior & Tactical Warning'}</span>
+                </div>
+                <p className="text-slate-200 text-xs leading-relaxed">
+                  {currentLang === 'ar' 
+                    ? airQuality.smokeAssessment.tacticalAdvisoryAr 
+                    : currentLang === 'fr' 
+                      ? airQuality.smokeAssessment.tacticalAdvisoryFr 
+                      : airQuality.smokeAssessment.tacticalAdvisoryEn}
+                </p>
+                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-900 flex items-center justify-between">
+                  <span>{currentLang === 'ar' ? 'الرؤية الميدانية' : 'Field Visibility'}</span>
+                  <span className="font-mono text-rose-300">
+                    {airQuality.pm10 > 250 ? '< 150m' : airQuality.pm10 > 100 ? '200m - 500m' : '> 1000m'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 4: Medical Triage & Field Health Care */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex flex-col justify-between space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                  <HeartPulse className="w-4 h-4 shrink-0" />
+                  <span>{currentLang === 'ar' ? 'السلامة الطبية والترياج الميداني' : 'Medical Triage & Field Care'}</span>
+                </div>
+                <p className="text-slate-200 text-xs leading-relaxed">
+                  {currentLang === 'ar' 
+                    ? airQuality.smokeAssessment.crewHealthActionAr 
+                    : currentLang === 'fr' 
+                      ? airQuality.smokeAssessment.crewHealthActionFr 
+                      : airQuality.smokeAssessment.crewHealthActionEn}
+                </p>
+                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-900 flex items-center justify-between">
+                  <span>{currentLang === 'ar' ? 'أول أكسيد الكربون CO' : 'CO Level'}</span>
+                  <span className={`font-mono font-bold ${airQuality.carbonMonoxidePpm > 15 ? 'text-rose-400' : 'text-emerald-300'}`}>
+                    {airQuality.carbonMonoxidePpm} ppm ({airQuality.carbonMonoxideUgM3} µg/m³)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Atmospheric Particulate Concentration vs Health Benchmarks */}
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-bold text-slate-200">
+                  {currentLang === 'ar' ? 'مقارنة تركيز الجسيمات مع معايير منظمة الصحة العالمية (WHO) والوكالة الأمريكية (EPA):' : 'Particulate Density vs WHO / EPA Air Quality Benchmarks:'}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {currentLang === 'ar' ? 'الحد الأقصى اليومي الآمن لمنظمة الصحة: 15 µg/m³ لـ PM2.5 و 45 µg/m³ لـ PM10' : 'WHO 24h Guideline: 15 µg/m³ for PM2.5 & 45 µg/m³ for PM10'}
+                </span>
+              </div>
+
+              {/* PM2.5 Bar Meter */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300 font-medium">
+                    {currentLang === 'ar' ? 'الجسيمات الدقيقة PM2.5 (تغلغل رئوي عميق):' : 'Fine Particulates PM2.5 (Deep Lung Penetration):'}
+                  </span>
+                  <span className="font-mono font-bold text-amber-300">
+                    {airQuality.pm25} µg/m³ ({Math.round((airQuality.pm25 / 15) * 10) / 10}x WHO threshold)
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden flex">
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 via-amber-500 to-rose-600 transition-all duration-500 rounded-full"
+                    style={{ width: `${Math.min(100, Math.max(5, (airQuality.pm25 / 250) * 100))}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* PM10 Bar Meter */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300 font-medium">
+                    {currentLang === 'ar' ? 'الرماد والسخام PM10 (تهيج الشعب الهوائية والعينين):' : 'Coarse Ash & Soot PM10 (Bronchial & Eye Irritation):'}
+                  </span>
+                  <span className="font-mono font-bold text-sky-300">
+                    {airQuality.pm10} µg/m³ ({Math.round((airQuality.pm10 / 45) * 10) / 10}x WHO threshold)
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden flex">
+                  <div 
+                    className="h-full bg-gradient-to-r from-teal-500 via-sky-500 to-red-600 transition-all duration-500 rounded-full"
+                    style={{ width: `${Math.min(100, Math.max(5, (airQuality.pm10 / 350) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 24-Hour National Wildfire Risk Velocity & Trend Summary Ribbon */}

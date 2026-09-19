@@ -85,6 +85,22 @@ export function loadOfflineGISState(): {
     const rawWaterPoints = localStorage.getItem(CACHE_KEYS.WATER_POINTS);
     const rawResources = localStorage.getItem(CACHE_KEYS.RESOURCES);
     const rawSignals = localStorage.getItem(CACHE_KEYS.SIGNALS);
+    let sanitizedSignals: DetectionSignal[] | null = null;
+    if (rawSignals) {
+      try {
+        const parsed = JSON.parse(rawSignals);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<string>();
+          sanitizedSignals = parsed.filter((s: DetectionSignal) => {
+            if (!s || !s.id || seen.has(s.id)) return false;
+            seen.add(s.id);
+            return true;
+          });
+        }
+      } catch (e) {
+        console.warn('[AWIS Offline Cache] Failed to parse cached signals:', e);
+      }
+    }
     const rawWeather = localStorage.getItem(CACHE_KEYS.WEATHER);
     const lastSync = localStorage.getItem(CACHE_KEYS.LAST_SYNC);
 
@@ -93,7 +109,7 @@ export function loadOfflineGISState(): {
       forests: rawForests ? JSON.parse(rawForests) : null,
       waterPoints: rawWaterPoints ? JSON.parse(rawWaterPoints) : null,
       resources: rawResources ? JSON.parse(rawResources) : null,
-      signals: rawSignals ? JSON.parse(rawSignals) : null,
+      signals: sanitizedSignals,
       weather: rawWeather ? JSON.parse(rawWeather) : null,
       lastSync
     };

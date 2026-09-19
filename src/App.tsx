@@ -23,6 +23,7 @@ import { Header } from './components/common/Header';
 import { KPISummaryBar } from './components/common/KPISummaryBar';
 import { GISMap } from './components/gis/GISMap';
 import { AlertFeedSidebar } from './components/alerts/AlertFeedSidebar';
+import { Bell, PanelRightOpen } from 'lucide-react';
 import { IncidentDetailModal } from './components/incident/IncidentDetailModal';
 import { ForestTwinModal } from './components/forest/ForestTwinModal';
 import { CitizenReportingModal } from './components/citizen/CitizenReportingModal';
@@ -63,15 +64,59 @@ import {
 import { PushNotificationModal } from './components/notifications/PushNotificationModal';
 import { startFirmsPolling, fetchFirmsHotspots, transformFirmsToIncidents, FirmsDetection } from './services/firmsService';
 import { LiveSatelliteModal } from './components/gis/LiveSatelliteModal';
+import { EvacuationAlertModal } from './components/alerts/EvacuationAlertModal';
+import {
+  testFirestoreConnection,
+  subscribeToIncidents,
+  subscribeToResources,
+  syncIncidentToCloud,
+  syncResourceToCloud,
+  submitCitizenReportToCloud
+} from './firebaseConfig';
+import { UserRole } from './types';
+import { RBACProvider, useRBAC } from './context/RBACContext';
+import { RBACModal } from './components/auth/RBACModal';
+import { AccessDeniedModal } from './components/auth/AccessDeniedModal';
 
-export default function App() {
+function AppContent() {
+  const { role, switchRole, checkAndExecute, permissions } = useRBAC();
   const [currentLang, setCurrentLang] = useState<Language>('ar');
+  const [currentRole, setCurrentRole] = useState<UserRole>('national_command');
+
+  // Synchronize internal detailed UserRole when high-level RBAC role changes
+  useEffect(() => {
+    if (role === 'Citizen' && currentRole !== 'citizen') {
+      setCurrentRole('citizen');
+    } else if (role === 'FieldUnit' && currentRole !== 'field_team' && currentRole !== 'forestry_expert') {
+      setCurrentRole('field_team');
+    } else if (role === 'CentralCommand' && (currentRole === 'citizen' || currentRole === 'field_team')) {
+      setCurrentRole('national_command');
+    }
+  }, [role]);
+
+  const handleRoleChange = (newRole: UserRole) => {
+    setCurrentRole(newRole);
+    if (newRole === 'citizen') {
+      switchRole('Citizen');
+    } else if (newRole === 'field_team' || newRole === 'forestry_expert') {
+      switchRole('FieldUnit');
+    } else {
+      switchRole('CentralCommand');
+    }
+  };
   const [incidents, setIncidents] = useState<WildfireIncident[]>(SAMPLE_INCIDENTS);
   const [forests, setForests] = useState<ForestZone[]>(SAMPLE_FORESTS);
   const [waterPoints, setWaterPoints] = useState<WaterPoint[]>(SAMPLE_WATER_POINTS);
   const [watchtowers, setWatchtowers] = useState<WatchtowerCamera[]>(SAMPLE_WATCHTOWERS);
   const [resources, setResources] = useState<EmergencyResource[]>(SAMPLE_RESOURCES);
-  const [signals, setSignals] = useState<DetectionSignal[]>(SAMPLE_DETECTION_SIGNALS);
+  const [signals, setSignals] = useState<DetectionSignal[]>(() => {
+    const seen = new Set<string>();
+    return SAMPLE_DETECTION_SIGNALS.filter((s) => {
+      if (!s || !s.id || seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
+  });
 
   // Browser Push Notifications & Background Service Worker Alert State
   const [showNotificationModal, setShowNotificationModal] = useState<boolean>(false);
@@ -89,6 +134,7 @@ export default function App() {
   // Offline Forest Operations & Service Worker Cache State
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSimulatedOffline, setIsSimulatedOffline] = useState<boolean>(false);
+  const [isCloudSyncActive, setIsCloudSyncActive] = useState<boolean>(false);
   const [showOfflineModal, setShowOfflineModal] = useState<boolean>(false);
   const [offlineStats, setOfflineStats] = useState<OfflineCacheStats>(() => getOfflineCacheStats());
   const [queuedReports, setQueuedReports] = useState<QueuedOfflineReport[]>(() => getQueuedOfflineReports());
@@ -106,10 +152,23 @@ export default function App() {
   const [showAnalyticsModal, setShowAnalyticsModal] = useState<boolean>(false);
   const [showPostFireModal, setShowPostFireModal] = useState<boolean>(false);
 
+  // Collapsible Dashboard State (Desktop & Mobile Overlay Management)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isKpiCollapsed, setIsKpiCollapsed] = useState<boolean>(false);
+  // Mobile bottom sheet state: 'peek' (~50px tab), 'partial' (max 30% height), 'expanded' (75% height), 'hidden' (closed)
+  const [mobileSheetState, setMobileSheetState] = useState<'peek' | 'partial' | 'expanded' | 'hidden'>('partial');
+
   // D3 Predictive Burn-Rate Modeling State
   const [showBurnRateModal, setShowBurnRateModal] = useState<boolean>(false);
   const [burnRateIncident, setBurnRateIncident] = useState<WildfireIncident | null>(SAMPLE_INCIDENTS[0]);
   const [showSatelliteModal, setShowSatelliteModal] = useState<boolean>(false);
+  const [showEvacuationModal, setShowEvacuationModal] = useState<boolean>(false);
+  const [evacuationTargetIncident, setEvacuationTargetIncident] = useState<WildfireIncident | null>(null);
+
+  const handleOpenEvacuationAlert = (incident?: WildfireIncident) => {
+    setEvacuationTargetIncident(incident || selectedIncident || incidents[0] || null);
+    setShowEvacuationModal(true);
+  };
 
   const handleOpenBurnRateModeling = (targetIncident?: WildfireIncident) => {
     const inc = targetIncident || selectedIncident || incidents[0] || SAMPLE_INCIDENTS[0];
@@ -244,10 +303,38 @@ export default function App() {
     };
   }, []);
 
+  // Cloud Firestore Real-time Synchronized Subscriptions with Offline Persistence
+  useEffect(() => {
+    testFirestoreConnection().then((res) => {
+      setIsCloudSyncActive(res.connected);
+      console.log(`[AWIS Firebase] ${res.message}`);
+    });
+
+    const unsubIncidents = subscribeToIncidents((cloudIncidents) => {
+      if (cloudIncidents && cloudIncidents.length > 0) {
+        setIncidents(cloudIncidents);
+        setIsCloudSyncActive(true);
+      }
+    });
+
+    const unsubResources = subscribeToResources((cloudResources) => {
+      if (cloudResources && cloudResources.length > 0) {
+        setResources(cloudResources);
+        setIsCloudSyncActive(true);
+      }
+    });
+
+    return () => {
+      unsubIncidents();
+      unsubResources();
+    };
+  }, []);
+
   // Helper to ingest FIRMS satellite signals into live telemetry
   const ingestFirmsSignals = (detections: FirmsDetection[]) => {
-    const satSignals: DetectionSignal[] = detections.map((d) => ({
-      id: `sig-firms-${d.id}`,
+    const nowStamp = Date.now();
+    const satSignals: DetectionSignal[] = detections.map((d, index) => ({
+      id: `sig-firms-${d.id}-${index}-${nowStamp}-${Math.random().toString(36).slice(2, 6)}`,
       source: 'satellite_firms',
       sourceName: `${d.satellite} (${d.instrument})`,
       timestamp: `${d.acqDate} ${d.acqTime} UTC`,
@@ -262,10 +349,15 @@ export default function App() {
     }));
 
     setSignals((prev) => {
-      const existingIds = new Set(prev.map((s) => s.id));
-      const newOnes = satSignals.filter((s) => !existingIds.has(s.id));
-      if (newOnes.length === 0) return prev;
-      return [...newOnes, ...prev];
+      const seen = new Set<string>();
+      const combined: DetectionSignal[] = [];
+      for (const s of [...satSignals, ...prev]) {
+        if (s && s.id && !seen.has(s.id)) {
+          seen.add(s.id);
+          combined.push(s);
+        }
+      }
+      return combined;
     });
   };
 
@@ -362,7 +454,14 @@ export default function App() {
         if (cached.forests) setForests(cached.forests);
         if (cached.waterPoints) setWaterPoints(cached.waterPoints);
         if (cached.resources) setResources(cached.resources);
-        if (cached.signals) setSignals(cached.signals);
+        if (cached.signals) {
+          const seen = new Set<string>();
+          setSignals(cached.signals.filter((s) => {
+            if (!s || !s.id || seen.has(s.id)) return false;
+            seen.add(s.id);
+            return true;
+          }));
+        }
         if (cached.weather) setLiveWeather(cached.weather);
       }
     } else {
@@ -471,93 +570,117 @@ export default function App() {
 
   // Expert-in-the-loop: Confirm incident
   const handleConfirmIncident = (id: string, notes: string) => {
-    setIncidents((prev) =>
-      prev.map((inc) => {
-        if (inc.id === id) {
-          return {
-            ...inc,
-            status: 'confirmed',
-            confidenceScore: Math.max(inc.confidenceScore, 98),
-            expertValidation: {
-              verified: true,
-              expertName: 'Human Duty Officer (Command Post)',
-              decision: 'confirmed',
-              notes,
-              timestamp: new Date().toISOString().substring(11, 19)
-            },
-            timeline: [
-              ...inc.timeline,
-              {
-                id: `evt-${Date.now()}`,
-                timestamp: new Date().toISOString().substring(11, 19),
-                type: 'verification',
-                title: 'Incident Formally Confirmed by Duty Commander',
-                description: notes,
-                sourceBadge: 'Human-in-the-Loop'
-              }
-            ]
-          };
-        }
-        return inc;
-      })
+    checkAndExecute(
+      currentLang === 'ar' ? 'اعتماد الحريق رسمياً' : 'Official Incident Verification',
+      'CentralCommand',
+      () => {
+        setIncidents((prev) =>
+          prev.map((inc) => {
+            if (inc.id === id) {
+              const updated: WildfireIncident = {
+                ...inc,
+                status: 'confirmed',
+                confidenceScore: Math.max(inc.confidenceScore, 98),
+                expertValidation: {
+                  verified: true,
+                  expertName: 'Human Duty Officer (Command Post)',
+                  decision: 'confirmed',
+                  notes,
+                  timestamp: new Date().toISOString().substring(11, 19)
+                },
+                timeline: [
+                  ...inc.timeline,
+                  {
+                    id: `evt-${Date.now()}`,
+                    timestamp: new Date().toISOString().substring(11, 19),
+                    type: 'verification',
+                    title: 'Incident Formally Confirmed by Duty Commander',
+                    description: notes,
+                    sourceBadge: 'Human-in-the-Loop'
+                  }
+                ]
+              };
+              syncIncidentToCloud(updated).catch(() => {});
+              return updated;
+            }
+            return inc;
+          })
+        );
+      }
     );
   };
 
   // Expert-in-the-loop: Reject incident (false alarm)
   const handleRejectIncident = (id: string, reason: string) => {
-    setIncidents((prev) =>
-      prev.map((inc) => {
-        if (inc.id === id) {
-          return {
-            ...inc,
-            status: 'false_positive',
-            confidenceScore: 10,
-            expertValidation: {
-              verified: false,
-              expertName: 'Human Duty Officer (Command Post)',
-              decision: 'rejected',
-              notes: reason,
-              timestamp: new Date().toISOString().substring(11, 19)
+    checkAndExecute(
+      currentLang === 'ar' ? 'رفض الإنذار الكاذب' : 'Reject False Alarm',
+      'CentralCommand',
+      () => {
+        setIncidents((prev) =>
+          prev.map((inc) => {
+            if (inc.id === id) {
+              const updated: WildfireIncident = {
+                ...inc,
+                status: 'false_positive',
+                confidenceScore: 10,
+                expertValidation: {
+                  verified: false,
+                  expertName: 'Human Duty Officer (Command Post)',
+                  decision: 'rejected',
+                  notes: reason,
+                  timestamp: new Date().toISOString().substring(11, 19)
+                }
+              };
+              syncIncidentToCloud(updated).catch(() => {});
+              return updated;
             }
-          };
-        }
-        return inc;
-      })
+            return inc;
+          })
+        );
+      }
     );
   };
 
   // Dispatch resource to incident
   const handleDispatchResource = (incidentId: string, resourceId: string) => {
-    setIncidents((prev) =>
-      prev.map((inc) => {
-        if (inc.id === incidentId && !inc.assignedResources.includes(resourceId)) {
-          return {
-            ...inc,
-            assignedResources: [...inc.assignedResources, resourceId],
-            timeline: [
-              ...inc.timeline,
-              {
-                id: `evt-${Date.now()}`,
-                timestamp: new Date().toISOString().substring(11, 19),
-                type: 'dispatch',
-                title: `Resource Unit Dispatched: ${resourceId}`,
-                description: 'Tactical unit mobilized with priority right of way.',
-                sourceBadge: 'Civil Protection Dispatch'
-              }
-            ]
-          };
-        }
-        return inc;
-      })
-    );
+    return checkAndExecute(
+      currentLang === 'ar' ? 'تحريك رتل الحماية المدنية' : 'Dispatch Emergency Fleet',
+      'CentralCommand',
+      () => {
+        setIncidents((prev) =>
+          prev.map((inc) => {
+            if (inc.id === incidentId && !inc.assignedResources.includes(resourceId)) {
+              return {
+                ...inc,
+                assignedResources: [...inc.assignedResources, resourceId],
+                timeline: [
+                  ...inc.timeline,
+                  {
+                    id: `evt-${Date.now()}`,
+                    timestamp: new Date().toISOString().substring(11, 19),
+                    type: 'dispatch',
+                    title: `Resource Unit Dispatched: ${resourceId}`,
+                    description: 'Tactical unit mobilized with priority right of way.',
+                    sourceBadge: 'Civil Protection Dispatch'
+                  }
+                ]
+              };
+            }
+            return inc;
+          })
+        );
 
-    setResources((prev) =>
-      prev.map((res) => {
-        if (res.id === resourceId) {
-          return { ...res, status: 'en_route', assignedIncidentId: incidentId };
-        }
-        return res;
-      })
+        setResources((prev) =>
+          prev.map((res) => {
+            if (res.id === resourceId) {
+              const updated: EmergencyResource = { ...res, status: 'en_route', assignedIncidentId: incidentId };
+              syncResourceToCloud(updated).catch(() => {});
+              return updated;
+            }
+            return res;
+          })
+        );
+      }
     );
   };
 
@@ -571,8 +694,9 @@ export default function App() {
     imageUrl?: string;
     deviceInfo: string;
   }) => {
+    const reportId = `cit-${Date.now()}`;
     const newSignal: DetectionSignal = {
-      id: `sig-cit-${Date.now()}`,
+      id: `sig-${reportId}`,
       source: 'citizen_report',
       sourceName: 'Citizen Mobile Hotline (IMEI Verified)',
       timestamp: new Date().toISOString().substring(11, 19),
@@ -586,6 +710,16 @@ export default function App() {
     };
 
     setSignals((prev) => [newSignal, ...prev]);
+
+    // Cloud Firestore Sync with Offline Persistence (queues seamlessly if offline)
+    submitCitizenReportToCloud({
+      id: reportId,
+      wilaya: report.locationNameHint || 'National',
+      description: `${report.description} (Est: ${report.fireSizeEstimate}, Smoke: ${report.smokeDirection})`,
+      lat: report.location.lat,
+      lng: report.location.lng,
+      imageUrl: report.imageUrl
+    }).catch(() => {});
 
     // If currently offline in remote area, queue report locally in LocalStorage
     const effectiveOnline = isOnline && !isSimulatedOffline;
@@ -672,6 +806,8 @@ export default function App() {
       <Header
         currentLang={currentLang}
         onLanguageChange={setCurrentLang}
+        currentRole={currentRole}
+        onRoleChange={handleRoleChange}
         onOpenSimulation={() => setShowSimulationModal(true)}
         onOpenCitizenReport={() => setShowCitizenModal(true)}
         onOpenFieldOps={() => setShowFieldOpsModal(true)}
@@ -680,12 +816,14 @@ export default function App() {
         onOpenDroneSimulation={() => handleOpenDroneSimulation()}
         onOpenBurnRateModeling={() => handleOpenBurnRateModeling()}
         onOpenSatelliteUplink={() => setShowSatelliteModal(true)}
+        onOpenEvacuationAlert={() => handleOpenEvacuationAlert()}
         isOnline={isOnline}
         isSimulatedOffline={isSimulatedOffline}
         onOpenOfflineManager={() => setShowOfflineModal(true)}
         offlineStats={offlineStats}
         onOpenNotifications={() => setShowNotificationModal(true)}
         notificationPermission={notificationPermission}
+        isCloudSyncActive={isCloudSyncActive}
       />
 
       {/* Main Command Dashboard */}
@@ -704,12 +842,32 @@ export default function App() {
           isSimulatedOffline={isSimulatedOffline}
           onOpenOfflineManager={() => setShowOfflineModal(true)}
           offlineStats={offlineStats}
+          selectedIncident={selectedIncident}
+          isCollapsible={true}
+          isCollapsed={isKpiCollapsed}
+          onToggleCollapse={() => setIsKpiCollapsed(!isKpiCollapsed)}
         />
 
         {/* Central Spatial Operations Grid */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[640px]">
-          {/* Central Interactive GIS Map (8 cols on lg, 9 on xl) */}
-          <div className="lg:col-span-8 xl:col-span-9 h-full min-h-[580px] flex flex-col">
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[640px] relative">
+          {/* Central Interactive GIS Map (Full-width when sidebar collapsed) */}
+          <div className={`${isSidebarCollapsed ? 'col-span-12' : 'lg:col-span-8 xl:col-span-9'} h-full min-h-[580px] flex flex-col relative transition-all duration-300`}>
+            {/* Desktop uncollapse floating trigger when sidebar is hidden */}
+            {isSidebarCollapsed && (
+              <button
+                id="btn-reopen-desktop-sidebar"
+                onClick={() => setIsSidebarCollapsed(false)}
+                className="hidden lg:flex items-center gap-2 absolute top-3 end-3 z-30 px-3 py-2 rounded-xl bg-slate-900/95 hover:bg-slate-800 text-amber-300 hover:text-white border border-amber-500/40 shadow-2xl backdrop-blur-md text-xs font-bold transition cursor-pointer group"
+                title={currentLang === 'ar' ? 'إظهار لوحة التنبيهات الميدانية' : 'Show Alert Feed Panel'}
+              >
+                <PanelRightOpen className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+                <span>{currentLang === 'ar' ? 'إظهار لوحة التنبيهات' : 'Show Alert Feed'}</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/30">
+                  {signals.length}
+                </span>
+              </button>
+            )}
+
             <GISMap
               incidents={incidents}
               forests={forests}
@@ -739,17 +897,68 @@ export default function App() {
             />
           </div>
 
-          {/* Real-Time Alert Fusion Feed & Signal Stack (4 cols on lg, 3 on xl) */}
-          <div className="lg:col-span-4 xl:col-span-3 h-full min-h-[580px]">
-            <AlertFeedSidebar
-              signals={signals}
-              incidents={incidents}
-              onSelectIncident={handleSelectIncident}
-              currentLang={currentLang}
-              onOpenNotifications={() => setShowNotificationModal(true)}
-              notificationPermission={notificationPermission}
-            />
-          </div>
+          {/* Real-Time Alert Fusion Feed & Signal Stack (Desktop) */}
+          {!isSidebarCollapsed && (
+            <div className="hidden lg:block lg:col-span-4 xl:col-span-3 h-full min-h-[580px] transition-all duration-300">
+              <AlertFeedSidebar
+                signals={signals}
+                incidents={incidents}
+                onSelectIncident={handleSelectIncident}
+                currentLang={currentLang}
+                onOpenNotifications={() => setShowNotificationModal(true)}
+                notificationPermission={notificationPermission}
+                onToggleCollapse={() => setIsSidebarCollapsed(true)}
+                isCollapsed={false}
+                onClose={() => setIsSidebarCollapsed(true)}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Mobile Interactive Bottom Sheet (< lg viewport) */}
+        <div className="lg:hidden">
+          {mobileSheetState === 'hidden' ? (
+            <div className="fixed bottom-4 inset-x-0 flex justify-center z-30 pointer-events-none">
+              <button
+                id="btn-reopen-mobile-alerts"
+                onClick={() => setMobileSheetState('partial')}
+                className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/95 hover:bg-slate-800 text-white border border-amber-500/60 shadow-2xl backdrop-blur-md text-xs font-bold transition cursor-pointer"
+              >
+                <Bell className="w-4 h-4 text-amber-400 animate-bounce" />
+                <span>{currentLang === 'ar' ? 'تنبيهات الميدان النشطة' : 'Active Field Alerts'}</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-red-600 text-white font-mono text-[10px] font-bold">
+                  {signals.length}
+                </span>
+              </button>
+            </div>
+          ) : (
+            <div
+              id="mobile-alert-bottom-sheet"
+              className={`fixed bottom-0 inset-x-0 z-30 transition-all duration-300 ease-in-out shadow-2xl bg-slate-900/98 border-t border-slate-700 rounded-t-2xl flex flex-col ${
+                mobileSheetState === 'peek'
+                  ? 'h-14 overflow-hidden'
+                  : mobileSheetState === 'partial'
+                  ? 'h-[28vh] max-h-[240px]'
+                  : 'h-[75vh]'
+              }`}
+            >
+              <AlertFeedSidebar
+                signals={signals}
+                incidents={incidents}
+                onSelectIncident={(inc) => {
+                  handleSelectIncident(inc);
+                  setMobileSheetState('peek');
+                }}
+                currentLang={currentLang}
+                onOpenNotifications={() => setShowNotificationModal(true)}
+                notificationPermission={notificationPermission}
+                isMobileSheet={true}
+                sheetState={mobileSheetState}
+                onChangeSheetState={setMobileSheetState}
+                onClose={() => setMobileSheetState('hidden')}
+              />
+            </div>
+          )}
         </div>
       </main>
 
@@ -767,6 +976,7 @@ export default function App() {
           currentLang={currentLang}
           onOpenDroneSimulation={(inc) => handleOpenDroneSimulation(inc)}
           onOpenBurnRateModeling={(inc) => handleOpenBurnRateModeling(inc)}
+          onOpenEvacuationAlert={(inc) => handleOpenEvacuationAlert(inc)}
         />
       )}
 
@@ -919,6 +1129,29 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Carrier SMS & Cell Broadcast Evacuation Gateway Modal */}
+      {showEvacuationModal && (
+        <EvacuationAlertModal
+          onClose={() => setShowEvacuationModal(false)}
+          currentLang={currentLang}
+          defaultIncident={evacuationTargetIncident}
+        />
+      )}
+
+      {/* Firebase Authentication & RBAC Governance Modal */}
+      <RBACModal currentLang={currentLang} />
+
+      {/* Access Denied Feedback Modal */}
+      <AccessDeniedModal currentLang={currentLang} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <RBACProvider>
+      <AppContent />
+    </RBACProvider>
   );
 }

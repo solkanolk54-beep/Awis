@@ -26,6 +26,10 @@ interface EvacuationRoutesLayerProps {
   showSmokeCone: boolean;
   showShelters: boolean;
   currentLang: Language;
+  isTemporaryDynamicActive?: boolean;
+  temporaryCountdownSeconds?: number;
+  onExtendTemporary?: () => void;
+  onPinPermanent?: () => void;
 }
 
 export const EvacuationRoutesLayer: React.FC<EvacuationRoutesLayerProps> = ({
@@ -40,7 +44,11 @@ export const EvacuationRoutesLayer: React.FC<EvacuationRoutesLayerProps> = ({
   showRoadNetwork,
   showSmokeCone,
   showShelters,
-  currentLang
+  currentLang,
+  isTemporaryDynamicActive = false,
+  temporaryCountdownSeconds,
+  onExtendTemporary,
+  onPinPermanent
 }) => {
   // Convert road coordinates into SVG polyline points
   const getPathPoints = (coords: GeoCoordinates[]): string => {
@@ -269,6 +277,24 @@ export const EvacuationRoutesLayer: React.FC<EvacuationRoutesLayerProps> = ({
                 />
               )}
 
+              {/* Real-Time Moving Civilian Convoy Particles along the Graph Evacuation Path */}
+              {!isBlocked && (isSelected || isPrimary) && (
+                <g className="pointer-events-none">
+                  {/* Lead Evacuation Escort Vehicle */}
+                  <circle r={isSelected ? 3.4 : 2.6} fill="#34d399" stroke="#064e3b" strokeWidth="0.8">
+                    <animateMotion dur="4.5s" repeatCount="indefinite" path={pathD} />
+                  </circle>
+                  {/* Secondary Evacuation Convoy Bus */}
+                  <circle r={isSelected ? 3.0 : 2.2} fill="#6ee7b7" stroke="#064e3b" strokeWidth="0.7">
+                    <animateMotion dur="4.5s" begin="1.5s" repeatCount="indefinite" path={pathD} />
+                  </circle>
+                  {/* Tail Civilian Protection Ambulance */}
+                  <circle r={isSelected ? 2.8 : 2.0} fill="#a7f3d0" stroke="#064e3b" strokeWidth="0.6">
+                    <animateMotion dur="4.5s" begin="3.0s" repeatCount="indefinite" path={pathD} />
+                  </circle>
+                </g>
+              )}
+
               {/* Waypoint nodes along route */}
               {route.waypoints.map((wpt, idx) => {
                 const pt = geoToSvg(wpt.lat, wpt.lng);
@@ -285,35 +311,67 @@ export const EvacuationRoutesLayer: React.FC<EvacuationRoutesLayerProps> = ({
                 );
               })}
 
-              {/* Midpoint route telemetry badge */}
+              {/* Midpoint route telemetry badge & Temporary Dynamic Path Overlay */}
               {route.waypoints.length > 2 && (
                 (() => {
                   const midIndex = Math.floor(route.waypoints.length / 2);
                   const midPt = geoToSvg(route.waypoints[midIndex].lat, route.waypoints[midIndex].lng);
 
                   return (
-                    <g transform={`translate(${midPt.x}, ${midPt.y - 8})`}>
-                      <rect
-                        x="-30"
-                        y="-7"
-                        width="60"
-                        height="13"
-                        rx="3"
-                        fill="rgba(15, 23, 42, 0.94)"
-                        stroke={strokeColor}
-                        strokeWidth={isSelected ? '1.2' : '0.8'}
-                      />
-                      <text
-                        x="0"
-                        y="1.5"
-                        fill="#f8fafc"
-                        fontSize="6"
-                        fontWeight="bold"
-                        fontFamily="monospace"
-                        textAnchor="middle"
-                      >
-                        {isBlocked ? '⛔ BLOCKED' : `🟢 ${route.totalDistanceKm}km • ${route.estimatedTravelMinutes}m`}
-                      </text>
+                    <g>
+                      {/* Temporary Dynamic Path Active Header Pill */}
+                      {isTemporaryDynamicActive && isSelected && (
+                        <g transform={`translate(${midPt.x}, ${midPt.y - 23})`}>
+                          <rect
+                            x="-58"
+                            y="-9"
+                            width="116"
+                            height="18"
+                            rx="4"
+                            fill="rgba(4, 47, 46, 0.97)"
+                            stroke="#10b981"
+                            strokeWidth="1.2"
+                            filter="url(#safeCorridorGlow)"
+                          />
+                          <circle cx="-47" cy="0" r="3" fill="#34d399" className="animate-ping" />
+                          <circle cx="-47" cy="0" r="2" fill="#10b981" />
+                          <text
+                            x="-40"
+                            y="2.5"
+                            fill="#6ee7b7"
+                            fontSize="6"
+                            fontWeight="bold"
+                            fontFamily="monospace"
+                          >
+                            ⚡ DYNAMIC PATH ({temporaryCountdownSeconds ?? 35}s)
+                          </text>
+                        </g>
+                      )}
+
+                      {/* Main Telemetry Badge */}
+                      <g transform={`translate(${midPt.x}, ${midPt.y - 6})`}>
+                        <rect
+                          x="-34"
+                          y="-7"
+                          width="68"
+                          height="14"
+                          rx="3"
+                          fill="rgba(15, 23, 42, 0.94)"
+                          stroke={strokeColor}
+                          strokeWidth={isSelected ? '1.2' : '0.8'}
+                        />
+                        <text
+                          x="0"
+                          y="2"
+                          fill="#f8fafc"
+                          fontSize="6"
+                          fontWeight="bold"
+                          fontFamily="monospace"
+                          textAnchor="middle"
+                        >
+                          {isBlocked ? '⛔ BLOCKED' : `🟢 ${route.totalDistanceKm}km • ${route.estimatedTravelMinutes}m`}
+                        </text>
+                      </g>
                     </g>
                   );
                 })()

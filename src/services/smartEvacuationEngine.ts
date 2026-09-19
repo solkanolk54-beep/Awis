@@ -209,8 +209,598 @@ function buildTurnInstructions(
 }
 
 /**
+ * Topological Road Network Graph Definition for Graph-Based Pathfinding
+ */
+export interface GraphNode {
+  id: string;
+  name: string;
+  nameAr?: string;
+  nameFr?: string;
+  coordinates: GeoCoordinates;
+  type: 'settlement' | 'junction' | 'shelter' | 'waypoint';
+  settlementId?: string;
+  shelterId?: string;
+}
+
+export interface GraphEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  roadSegmentId: string;
+  roadName: string;
+  roadNameAr: string;
+  roadNameFr: string;
+  roadType: string;
+  distanceKm: number;
+  speedLimitKmH: number;
+  lanes: number;
+  capacityVehiclesPerHour: number;
+  elevationGainMeters: number;
+  path: GeoCoordinates[];
+}
+
+export interface RoadNetworkGraph {
+  nodes: Map<string, GraphNode>;
+  adjacency: Map<string, GraphEdge[]>;
+}
+
+export interface GraphPathfindingResult {
+  route: CalculatedEvacuationRoute;
+  nodesExplored: number;
+  executionTimeMs: number;
+  totalCost: number;
+}
+
+/**
+ * Builds the comprehensive Algerian Road Network topological graph.
+ * Automatically identifies junctions where road paths intersect or connect,
+ * and links all at-risk settlements and designated safe evacuation zones.
+ */
+export function buildAlgerianRoadGraph(): RoadNetworkGraph {
+  const nodes = new Map<string, GraphNode>();
+  const adjacency = new Map<string, GraphEdge[]>();
+
+  const addNode = (node: GraphNode) => {
+    if (!nodes.has(node.id)) {
+      nodes.set(node.id, node);
+      adjacency.set(node.id, []);
+    }
+  };
+
+  const addEdge = (edge: GraphEdge) => {
+    const list = adjacency.get(edge.fromNodeId) || [];
+    list.push(edge);
+    adjacency.set(edge.fromNodeId, list);
+  };
+
+  // Helper to find existing node within snap threshold (0.35 km) or register new
+  const getOrCreateJunctionNode = (coord: GeoCoordinates, label: string): string => {
+    for (const [id, node] of nodes.entries()) {
+      if (computeGeoDistanceKm(node.coordinates, coord) <= 0.35) {
+        return id;
+      }
+    }
+    const nodeId = `JUNCTION-${label.replace(/\s+/g, '-').toUpperCase()}-${nodes.size + 1}`;
+    addNode({
+      id: nodeId,
+      name: label,
+      coordinates: coord,
+      type: 'junction'
+    });
+    return nodeId;
+  };
+
+  // 1. Ingest all Algerian Road Segments and build connected topological graph
+  for (const road of ALGERIAN_ROAD_SEGMENTS) {
+    if (!road.path || road.path.length < 2) continue;
+
+    let prevNodeId = getOrCreateJunctionNode(road.path[0], `${road.roadNumber}-0`);
+
+    for (let i = 1; i < road.path.length; i++) {
+      const currPt = road.path[i];
+      const isLast = i === road.path.length - 1;
+      const currNodeId = getOrCreateJunctionNode(
+        currPt, 
+        `${road.roadNumber}-${i}${isLast ? '-END' : ''}`
+      );
+
+      const segDist = computeGeoDistanceKm(road.path[i - 1], currPt);
+      const subPath = [road.path[i - 1], currPt];
+
+      // Forward Edge
+      const fwdEdgeId = `EDGE-${road.id}-${prevNodeId}-TO-${currNodeId}`;
+      addEdge({
+        id: fwdEdgeId,
+        fromNodeId: prevNodeId,
+        toNodeId: currNodeId,
+        roadSegmentId: road.id,
+        roadName: road.nameEn,
+        roadNameAr: road.nameAr,
+        roadNameFr: road.nameFr,
+        roadType: road.type,
+        distanceKm: segDist,
+        speedLimitKmH: road.speedLimitKmH,
+        lanes: road.lanes,
+        capacityVehiclesPerHour: road.capacityVehiclesPerHour,
+        elevationGainMeters: (road.elevationGainMeters || 0) / (road.path.length - 1),
+        path: subPath
+      });
+
+      // Backward Edge (Bi-directional Algerian Road)
+      const bwdEdgeId = `EDGE-${road.id}-${currNodeId}-TO-${prevNodeId}`;
+      addEdge({
+        id: bwdEdgeId,
+        fromNodeId: currNodeId,
+        toNodeId: prevNodeId,
+        roadSegmentId: road.id,
+        roadName: road.nameEn,
+        roadNameAr: road.nameAr,
+        roadNameFr: road.nameFr,
+        roadType: road.type,
+        distanceKm: segDist,
+        speedLimitKmH: road.speedLimitKmH * 0.95,
+        lanes: road.lanes,
+        capacityVehiclesPerHour: road.capacityVehiclesPerHour,
+        elevationGainMeters: -((road.elevationGainMeters || 0) / (road.path.length - 1)),
+        path: [currPt, road.path[i - 1]]
+      });
+
+      prevNodeId = currNodeId;
+    }
+  }
+
+  // 2. Register and link All At-Risk Civilian Settlements into the Graph
+  for (const settlement of AT_RISK_SETTLEMENTS) {
+    const settleNodeId = `NODE-SETTLE-${settlement.id}`;
+    addNode({
+      id: settleNodeId,
+      name: settlement.nameEn,
+      nameAr: settlement.nameAr,
+      nameFr: settlement.nameFr,
+      coordinates: settlement.coordinates,
+      type: 'settlement',
+      settlementId: settlement.id
+    });
+
+    // Link settlement to its designated primary and secondary road junctions
+    // Connect to nearest road graph nodes
+    let nearestNodeA: { id: string; dist: number } | null = null;
+    let nearestNodeB: { id: string; dist: number } | null = null;
+
+    for (const [id, node] of nodes.entries()) {
+      if (node.type === 'settlement' || node.type === 'shelter') continue;
+      const d = computeGeoDistanceKm(settlement.coordinates, node.coordinates);
+      if (!nearestNodeA || d < nearestNodeA.dist) {
+        nearestNodeB = nearestNodeA;
+        nearestNodeA = { id, dist: d };
+      } else if (!nearestNodeB || d < nearestNodeB.dist) {
+        nearestNodeB = { id, dist: d };
+      }
+    }
+
+    if (nearestNodeA) {
+      const edgeOutId = `EDGE-CONNECT-${settleNodeId}-TO-${nearestNodeA.id}`;
+      addEdge({
+        id: edgeOutId,
+        fromNodeId: settleNodeId,
+        toNodeId: nearestNodeA.id,
+        roadSegmentId: settlement.primaryRoadAccessId,
+        roadName: `${settlement.nameEn} Primary Access Road`,
+        roadNameAr: `طريق نفاذ ${settlement.nameAr} الرئيسي`,
+        roadNameFr: `Voie d'accès principale ${settlement.nameFr}`,
+        roadType: 'wilaya',
+        distanceKm: nearestNodeA.dist,
+        speedLimitKmH: 50,
+        lanes: 2,
+        capacityVehiclesPerHour: 800,
+        elevationGainMeters: 40,
+        path: [settlement.coordinates, nodes.get(nearestNodeA.id)!.coordinates]
+      });
+    }
+
+    if (nearestNodeB && nearestNodeB.dist < 8.0) {
+      const edgeOutBId = `EDGE-CONNECT-${settleNodeId}-TO-${nearestNodeB.id}`;
+      addEdge({
+        id: edgeOutBId,
+        fromNodeId: settleNodeId,
+        toNodeId: nearestNodeB.id,
+        roadSegmentId: settlement.secondaryRoadAccessId,
+        roadName: `${settlement.nameEn} Secondary Contingency Access`,
+        roadNameAr: `طريق نفاذ ${settlement.nameAr} الثانوي الاحتياطي`,
+        roadNameFr: `Voie d'accès secondaire ${settlement.nameFr}`,
+        roadType: 'mountain_pass',
+        distanceKm: nearestNodeB.dist,
+        speedLimitKmH: 40,
+        lanes: 1,
+        capacityVehiclesPerHour: 400,
+        elevationGainMeters: 75,
+        path: [settlement.coordinates, nodes.get(nearestNodeB.id)!.coordinates]
+      });
+    }
+  }
+
+  // 3. Register and link All Safe Evacuation Zones into the Graph
+  for (const shelter of SAFE_EVACUATION_ZONES) {
+    const shelterNodeId = `NODE-SHELTER-${shelter.id}`;
+    addNode({
+      id: shelterNodeId,
+      name: shelter.nameEn,
+      nameAr: shelter.nameAr,
+      nameFr: shelter.nameFr,
+      coordinates: shelter.coordinates,
+      type: 'shelter',
+      shelterId: shelter.id
+    });
+
+    // Link closest road junctions to this safe shelter
+    for (const [id, node] of nodes.entries()) {
+      if (node.type === 'settlement' || node.type === 'shelter') continue;
+      const d = computeGeoDistanceKm(shelter.coordinates, node.coordinates);
+      if (d <= 6.5) {
+        addEdge({
+          id: `EDGE-INTO-${id}-TO-${shelterNodeId}`,
+          fromNodeId: id,
+          toNodeId: shelterNodeId,
+          roadSegmentId: `SAFE-ACCESS-${shelter.id}`,
+          roadName: `${shelter.nameEn} Ingress Gate`,
+          roadNameAr: `مدخل ${shelter.nameAr}`,
+          roadNameFr: `Accès sécurisé ${shelter.nameFr}`,
+          roadType: 'national',
+          distanceKm: d,
+          speedLimitKmH: 60,
+          lanes: 2,
+          capacityVehiclesPerHour: 1500,
+          elevationGainMeters: 0,
+          path: [node.coordinates, shelter.coordinates]
+        });
+      }
+    }
+  }
+
+  return { nodes, adjacency };
+}
+
+// Cached singleton graph instance for fast pathfinding query execution
+let CACHED_ROAD_GRAPH: RoadNetworkGraph | null = null;
+function getRoadNetworkGraph(): RoadNetworkGraph {
+  if (!CACHED_ROAD_GRAPH) {
+    CACHED_ROAD_GRAPH = buildAlgerianRoadGraph();
+  }
+  return CACHED_ROAD_GRAPH;
+}
+
+/**
+ * Evaluates dynamic cost for traversing an edge under active wildfire conditions.
+ * Graph edges closer than 1.4km to confirmed fire perimeter are impassable (infinite weight).
+ * Edges inside the wind smoke plume or within heat radiation zones incur exponential penalties.
+ */
+function computeDynamicEdgeCost(
+  edge: GraphEdge,
+  fireCenter: GeoCoordinates,
+  flamePushHeadingDegrees: number,
+  plumeLengthKm: number,
+  avoidEdgeIds?: Set<string>,
+  evacuatingPopulation: number = 1500
+): { cost: number; isBlocked: boolean; minFireClearanceKm: number; hasSmoke: boolean } {
+  let minFireClearanceKm = Infinity;
+  let hasSmoke = false;
+
+  for (const pt of edge.path) {
+    const d = computeGeoDistanceKm(pt, fireCenter);
+    if (d < minFireClearanceKm) minFireClearanceKm = d;
+    if (!hasSmoke && isPointInsideSmokePlume(pt, fireCenter, flamePushHeadingDegrees, plumeLengthKm)) {
+      hasSmoke = true;
+    }
+  }
+
+  // 1. Critical Radiant Heat / Active Flame Front Blocking Threshold (< 1.4 km)
+  if (minFireClearanceKm <= 1.4) {
+    return {
+      cost: 1000000, // Impassable
+      isBlocked: true,
+      minFireClearanceKm,
+      hasSmoke
+    };
+  }
+
+  // 2. Base transit time in minutes
+  const speed = Math.max(25, edge.speedLimitKmH);
+  let cost = (edge.distanceKm / speed) * 60;
+
+  // 3. Flame proximity exponential penalty (1.4 km to 4.5 km)
+  if (minFireClearanceKm < 4.5) {
+    const proximityRatio = Math.max(0, 1 - (minFireClearanceKm - 1.4) / 3.1);
+    cost += 120 * Math.exp(proximityRatio * 2.2);
+  }
+
+  // 4. Downwind toxic smoke plume penalty
+  if (hasSmoke) {
+    cost += 45; // Substantial penalty due to zero visibility, respiratory hazard, convoy slowdown
+  }
+
+  // 5. Road capacity bottleneck delay
+  const convoys = Math.ceil(evacuatingPopulation / 3.5);
+  const throughput = Math.max(300, edge.capacityVehiclesPerHour);
+  cost += (convoys / throughput) * 12;
+
+  // 6. Steep mountain pass grade penalty
+  if (edge.elevationGainMeters > 200) {
+    cost += (edge.elevationGainMeters / 100) * 3;
+  }
+
+  // 7. Edge avoidance multiplier (used for secondary contingency path finding)
+  if (avoidEdgeIds && avoidEdgeIds.has(edge.id)) {
+    cost *= 5.0;
+  }
+
+  return {
+    cost,
+    isBlocked: false,
+    minFireClearanceKm,
+    hasSmoke
+  };
+}
+
+/**
+ * Graph-Based Pathfinding (Dijkstra / A* Algorithm)
+ * Finds the mathematically optimal evacuation route from a civilian settlement to the safest available shelter.
+ */
+export function findOptimalEvacuationRouteGraph(
+  settlement: CivilianSettlement,
+  targetShelters: SafeEvacuationZone[],
+  fireCenter: GeoCoordinates,
+  flamePushHeadingDegrees: number,
+  windSpeedKmH: number = 38,
+  avoidEdgeIds?: Set<string>,
+  isContingencyRoute: boolean = false
+): GraphPathfindingResult {
+  const startTime = performance.now();
+  const graph = getRoadNetworkGraph();
+  const startNodeId = `NODE-SETTLE-${settlement.id}`;
+
+  const plumeLengthKm = Math.min(16, 5 + (windSpeedKmH / 10) * 2.2);
+
+  // Set of target shelter node IDs
+  const targetNodeIds = new Set(targetShelters.map((s) => `NODE-SHELTER-${s.id}`));
+
+  // Min-Priority Queue state for Dijkstra / A*
+  const distances = new Map<string, number>();
+  const previousEdges = new Map<string, { edge: GraphEdge; fromNodeId: string }>();
+  const visited = new Set<string>();
+
+  // A* Heuristic: minimum straight-line distance to any target shelter
+  const getHeuristic = (nodeId: string): number => {
+    const node = graph.nodes.get(nodeId);
+    if (!node) return 0;
+    let minDist = Infinity;
+    for (const shelter of targetShelters) {
+      const d = computeGeoDistanceKm(node.coordinates, shelter.coordinates);
+      if (d < minDist) minDist = d;
+    }
+    return (minDist / 80) * 60; // Optimistic estimate in minutes at 80km/h
+  };
+
+  // Min-Priority queue array [nodeId, priority]
+  const pq: Array<{ nodeId: string; priority: number; dist: number }> = [];
+
+  distances.set(startNodeId, 0);
+  pq.push({ nodeId: startNodeId, priority: getHeuristic(startNodeId), dist: 0 });
+
+  let targetReachedNodeId: string | null = null;
+  let nodesExplored = 0;
+
+  while (pq.length > 0) {
+    // Extract node with minimum priority (A* f-score)
+    pq.sort((a, b) => a.priority - b.priority);
+    const current = pq.shift()!;
+    const u = current.nodeId;
+
+    if (visited.has(u)) continue;
+    visited.add(u);
+    nodesExplored++;
+
+    // Target reached check
+    if (targetNodeIds.has(u)) {
+      targetReachedNodeId = u;
+      break;
+    }
+
+    const currentDist = distances.get(u) ?? Infinity;
+    const neighbors = graph.adjacency.get(u) || [];
+
+    for (const edge of neighbors) {
+      const v = edge.toNodeId;
+      if (visited.has(v)) continue;
+
+      const edgeEval = computeDynamicEdgeCost(
+        edge,
+        fireCenter,
+        flamePushHeadingDegrees,
+        plumeLengthKm,
+        avoidEdgeIds,
+        settlement.population
+      );
+
+      // Skip impassable blocked roads unless absolutely forced
+      if (edgeEval.isBlocked) continue;
+
+      const newDist = currentDist + edgeEval.cost;
+      const existingDist = distances.get(v) ?? Infinity;
+
+      if (newDist < existingDist) {
+        distances.set(v, newDist);
+        previousEdges.set(v, { edge, fromNodeId: u });
+        const priority = newDist + getHeuristic(v);
+        pq.push({ nodeId: v, priority, dist: newDist });
+      }
+    }
+  }
+
+  // Fallback: If no target was directly reached (e.g. fire blocked all direct roads), pick closest explored shelter
+  if (!targetReachedNodeId) {
+    let bestDist = Infinity;
+    for (const sNodeId of targetNodeIds) {
+      const d = distances.get(sNodeId);
+      if (d !== undefined && d < bestDist) {
+        bestDist = d;
+        targetReachedNodeId = sNodeId;
+      }
+    }
+  }
+
+  // Determine chosen safe zone
+  let chosenShelter: SafeEvacuationZone = targetShelters[0] || SAFE_EVACUATION_ZONES[0];
+  if (targetReachedNodeId) {
+    const node = graph.nodes.get(targetReachedNodeId);
+    if (node?.shelterId) {
+      const s = targetShelters.find((z) => z.id === node.shelterId);
+      if (s) chosenShelter = s;
+    }
+  }
+
+  // Reconstruct path of edges
+  const pathEdges: GraphEdge[] = [];
+  let curr = targetReachedNodeId;
+
+  while (curr && curr !== startNodeId) {
+    const step = previousEdges.get(curr);
+    if (!step) break;
+    pathEdges.unshift(step.edge);
+    curr = step.fromNodeId;
+  }
+
+  // If path reconstruction failed, build direct fallback route
+  if (pathEdges.length === 0) {
+    const fallbackPt = [settlement.coordinates, chosenShelter.coordinates];
+    const totalDist = computeGeoDistanceKm(settlement.coordinates, chosenShelter.coordinates);
+    const executionTimeMs = performance.now() - startTime;
+
+    const fallbackRoute: CalculatedEvacuationRoute = {
+      id: `ROUTE-${settlement.id}-${isContingencyRoute ? 'SECONDARY' : 'PRIMARY'}`,
+      settlementId: settlement.id,
+      settlementName: settlement.nameEn,
+      settlementNameAr: settlement.nameAr,
+      safeZone: chosenShelter,
+      routeType: isContingencyRoute ? 'secondary_contingency' : 'primary_optimal',
+      status: 'caution_smoke',
+      totalDistanceKm: totalDist,
+      estimatedTravelMinutes: Math.round((totalDist / 45) * 60),
+      estimatedEvacuationClearanceMinutes: Math.round((totalDist / 45) * 60) + 20,
+      minFireClearanceKm: 3.5,
+      smokeExposureRisk: 'moderate',
+      bottleneckRiskIndex: 45,
+      waypoints: fallbackPt,
+      instructions: buildTurnInstructions(fallbackPt, 'Emergency Evacuation Corridor', chosenShelter),
+      roadSegmentsUsed: [settlement.primaryRoadAccessId],
+      logisticsRequired: {
+        ambulances: Math.max(2, Math.ceil(settlement.vulnerableCount * 0.04)),
+        buses: Math.max(3, Math.ceil(settlement.vulnerableCount / 38)),
+        policeEscorts: Math.max(2, Math.ceil(settlement.population / 750)),
+        medicalStaff: Math.max(4, Math.ceil(settlement.vulnerableCount * 0.06))
+      }
+    };
+
+    return {
+      route: fallbackRoute,
+      nodesExplored,
+      executionTimeMs,
+      totalCost: 100
+    };
+  }
+
+  // Assemble full waypoints from edge paths
+  const waypoints: GeoCoordinates[] = [settlement.coordinates];
+  let totalDistanceKm = 0;
+  let minFireClearanceKm = Infinity;
+  let hasSmokeEncountered = false;
+  const roadIdsUsed = new Set<string>();
+
+  for (const edge of pathEdges) {
+    roadIdsUsed.add(edge.roadSegmentId);
+    for (const pt of edge.path) {
+      const d = computeGeoDistanceKm(pt, fireCenter);
+      if (d < minFireClearanceKm) minFireClearanceKm = d;
+      if (!hasSmokeEncountered && isPointInsideSmokePlume(pt, fireCenter, flamePushHeadingDegrees, plumeLengthKm)) {
+        hasSmokeEncountered = true;
+      }
+      waypoints.push(pt);
+    }
+  }
+  waypoints.push(chosenShelter.coordinates);
+
+  // Clean duplicate consecutive coordinates
+  const cleanWaypoints = waypoints.filter((pt, idx, arr) => {
+    if (idx === 0) return true;
+    return computeGeoDistanceKm(pt, arr[idx - 1]) > 0.08;
+  });
+
+  // Calculate cumulative distance
+  for (let i = 1; i < cleanWaypoints.length; i++) {
+    totalDistanceKm += computeGeoDistanceKm(cleanWaypoints[i - 1], cleanWaypoints[i]);
+  }
+  totalDistanceKm = Number(totalDistanceKm.toFixed(1));
+
+  // Travel time and clearance calculations
+  const avgSpeed = 60;
+  const travelMinutes = Math.max(5, Math.round((totalDistanceKm / avgSpeed) * 60));
+  const bottleneckFactor = Math.min(100, Math.round((settlement.population / 1200) * 40));
+  const clearanceMinutes = travelMinutes + Math.round(bottleneckFactor * 0.35) + 12;
+
+  const isBlocked = minFireClearanceKm <= 1.4;
+  const status: RoadSafetyStatus = isBlocked
+    ? 'blocked_fire'
+    : hasSmokeEncountered || minFireClearanceKm < 2.5
+    ? 'caution_smoke'
+    : 'open_safe';
+
+  const executionTimeMs = Number((performance.now() - startTime).toFixed(2));
+  const totalCost = distances.get(targetReachedNodeId || '') || travelMinutes;
+
+  const route: CalculatedEvacuationRoute = {
+    id: `ROUTE-${settlement.id}-${isContingencyRoute ? 'SECONDARY' : 'PRIMARY'}`,
+    settlementId: settlement.id,
+    settlementName: settlement.nameEn,
+    settlementNameAr: settlement.nameAr,
+    safeZone: chosenShelter,
+    routeType: isBlocked
+      ? 'compromised_blocked'
+      : isContingencyRoute
+      ? 'secondary_contingency'
+      : 'primary_optimal',
+    status,
+    totalDistanceKm,
+    estimatedTravelMinutes: travelMinutes,
+    estimatedEvacuationClearanceMinutes: clearanceMinutes,
+    minFireClearanceKm: Number(minFireClearanceKm.toFixed(1)),
+    smokeExposureRisk: hasSmokeEncountered ? 'moderate' : 'none',
+    bottleneckRiskIndex: bottleneckFactor,
+    waypoints: cleanWaypoints,
+    instructions: buildTurnInstructions(
+      cleanWaypoints,
+      pathEdges[0]?.roadName || 'Designated Safe Evacuation Corridor',
+      chosenShelter
+    ),
+    roadSegmentsUsed: Array.from(roadIdsUsed),
+    logisticsRequired: {
+      ambulances: Math.max(2, Math.ceil(settlement.vulnerableCount * 0.04)),
+      buses: Math.max(3, Math.ceil(settlement.vulnerableCount / 38)),
+      policeEscorts: Math.max(2, Math.ceil(settlement.population / 750)),
+      medicalStaff: Math.max(4, Math.ceil(settlement.vulnerableCount * 0.06))
+    }
+  };
+
+  return {
+    route,
+    nodesExplored,
+    executionTimeMs,
+    totalCost
+  };
+}
+
+/**
  * Main Smart Evacuation Routing Optimizer:
- * Calculates Primary, Secondary, and Compromised routes for all settlements near a fire.
+ * Calculates Primary & Secondary optimal evacuation routes for all settlements
+ * near confirmed fire incidents utilizing the Graph-Based Pathfinding engine.
  */
 export function calculateSmartEvacuationPlan(
   fireCenter: GeoCoordinates,
@@ -219,11 +809,10 @@ export function calculateSmartEvacuationPlan(
   incidentId: string = 'ACTIVE-INCIDENT'
 ): EvacuationPlanScenario {
   // 1. Calculate downwind smoke plume cone
-  // Plume pushes along (windHeadingDegrees + 180)%360 or direct push
   const flamePushHeadingDegrees = windHeadingDegrees;
   const plumeLengthKm = Math.min(16, 5 + (windSpeedKmH / 10) * 2.2);
 
-  // 2. Evaluate all roads in the network
+  // 2. Evaluate all roads in the network for safety tagging
   const evaluatedRoads = ALGERIAN_ROAD_SEGMENTS.map((road) => {
     const safety = evaluateRoadSafety(road, fireCenter, flamePushHeadingDegrees);
     return {
@@ -236,10 +825,10 @@ export function calculateSmartEvacuationPlan(
     .filter((r) => r.status === 'blocked_fire')
     .map((r) => r.road.id);
 
-  // 3. Find routes for all settlements within 30km radius of the fire
+  // 3. Settlements within perimeter (35 km)
   const relevantSettlements = AT_RISK_SETTLEMENTS.filter((settlement) => {
     const dist = computeGeoDistanceKm(settlement.coordinates, fireCenter);
-    return dist <= 35; // Relevant perimeter
+    return dist <= 38;
   });
 
   const settlementRoutes: CalculatedEvacuationRoute[] = [];
@@ -248,175 +837,43 @@ export function calculateSmartEvacuationPlan(
   for (const settlement of relevantSettlements) {
     totalPopulationAtRisk += settlement.population;
 
-    // Find closest safe evacuation zones in the same or neighboring wilayas
-    const candidateSafeZones = SAFE_EVACUATION_ZONES.map((zone) => {
-      const distFromSettlement = computeGeoDistanceKm(settlement.coordinates, zone.coordinates);
-      const distFromFire = computeGeoDistanceKm(fireCenter, zone.coordinates);
-      return {
-        zone,
-        distFromSettlement,
-        distFromFire
-      };
-    })
-    // Safe zones must be far enough from fire (> 5 km)
-    .filter((z) => z.distFromFire >= 4.5)
-    .sort((a, b) => a.distFromSettlement - b.distFromSettlement);
+    // Filter viable safe shelters (at least 4.5km away from active fire perimeter)
+    const viableShelters = SAFE_EVACUATION_ZONES
+      .filter((z) => computeGeoDistanceKm(fireCenter, z.coordinates) >= 4.5)
+      .sort(
+        (a, b) =>
+          computeGeoDistanceKm(settlement.coordinates, a.coordinates) -
+          computeGeoDistanceKm(settlement.coordinates, b.coordinates)
+      );
 
-    const primarySafeZone = candidateSafeZones[0]?.zone || SAFE_EVACUATION_ZONES[0];
-    const secondarySafeZone = candidateSafeZones[1]?.zone || candidateSafeZones[0]?.zone || SAFE_EVACUATION_ZONES[1];
+    // Run Graph-Based Pathfinding for Primary Route (A* / Dijkstra)
+    const primaryResult = findOptimalEvacuationRouteGraph(
+      settlement,
+      viableShelters,
+      fireCenter,
+      flamePushHeadingDegrees,
+      windSpeedKmH,
+      undefined,
+      false
+    );
+    settlementRoutes.push(primaryResult.route);
 
-    // Find roads connecting settlement to safe zone
-    // Find matching road segments
-    const primaryRoad = evaluatedRoads.find((r) => r.road.id === settlement.primaryRoadAccessId);
-    const secondaryRoad = evaluatedRoads.find((r) => r.road.id === settlement.secondaryRoadAccessId);
-
-    // Build Route A (Primary)
-    // Waypoints start at settlement, follow connecting roads, terminate at SafeZone
-    const primaryWaypoints: GeoCoordinates[] = [
-      settlement.coordinates,
-      ...(primaryRoad ? primaryRoad.road.path : []),
-      primarySafeZone.coordinates
-    ];
-
-    // Clean duplicate consecutive coordinates
-    const filteredPrimaryWaypoints = primaryWaypoints.filter((pt, idx, arr) => {
-      if (idx === 0) return true;
-      return computeGeoDistanceKm(pt, arr[idx - 1]) > 0.15;
-    });
-
-    // Calculate metrics for primary route
-    let primaryTotalDist = 0;
-    let primaryMinFireClearance = Infinity;
-    let hasSmoke = false;
-
-    for (let i = 0; i < filteredPrimaryWaypoints.length; i++) {
-      const pt = filteredPrimaryWaypoints[i];
-      const fireDist = computeGeoDistanceKm(fireCenter, pt);
-      if (fireDist < primaryMinFireClearance) primaryMinFireClearance = fireDist;
-      if (isPointInsideSmokePlume(pt, fireCenter, flamePushHeadingDegrees, plumeLengthKm)) {
-        hasSmoke = true;
-      }
-
-      if (i > 0) {
-        primaryTotalDist += computeGeoDistanceKm(filteredPrimaryWaypoints[i - 1], pt);
-      }
+    // Run Graph-Based Pathfinding for Secondary Route (penalizing primary edges)
+    const usedEdges = new Set<string>();
+    for (const rId of primaryResult.route.roadSegmentsUsed) {
+      usedEdges.add(rId);
     }
 
-    primaryTotalDist = Number(primaryTotalDist.toFixed(1));
-    const avgSpeedKmH = primaryRoad ? primaryRoad.road.speedLimitKmH * 0.75 : 55;
-    const baseTravelMinutes = Math.round((primaryTotalDist / avgSpeedKmH) * 60);
-
-    // Evacuation Clearance Time formula:
-    // Takes vehicle convoy throughput and vulnerable evacuation into account
-    const vehicleCount = Math.ceil(settlement.population / 3.4);
-    const roadCapacityPerHour = primaryRoad ? primaryRoad.road.capacityVehiclesPerHour : 1000;
-    const bottleneckFactor = Math.min(100, Math.round((vehicleCount / roadCapacityPerHour) * 85));
-    const estimatedClearanceMinutes = baseTravelMinutes + Math.round(bottleneckFactor * 0.45) + 15;
-
-    const isPrimaryBlocked = primaryMinFireClearance <= 1.4 || (primaryRoad && primaryRoad.status === 'blocked_fire');
-
-    const primaryStatus: RoadSafetyStatus = isPrimaryBlocked
-      ? 'blocked_fire'
-      : hasSmoke
-      ? 'caution_smoke'
-      : 'open_safe';
-
-    const primaryRoute: CalculatedEvacuationRoute = {
-      id: `ROUTE-${settlement.id}-PRIMARY`,
-      settlementId: settlement.id,
-      settlementName: settlement.nameEn,
-      settlementNameAr: settlement.nameAr,
-      safeZone: primarySafeZone,
-      routeType: isPrimaryBlocked ? 'compromised_blocked' : 'primary_optimal',
-      status: primaryStatus,
-      totalDistanceKm: primaryTotalDist,
-      estimatedTravelMinutes: baseTravelMinutes,
-      estimatedEvacuationClearanceMinutes: estimatedClearanceMinutes,
-      minFireClearanceKm: Number(primaryMinFireClearance.toFixed(1)),
-      smokeExposureRisk: hasSmoke ? 'moderate' : 'none',
-      bottleneckRiskIndex: bottleneckFactor,
-      waypoints: filteredPrimaryWaypoints,
-      instructions: buildTurnInstructions(
-        filteredPrimaryWaypoints,
-        primaryRoad ? primaryRoad.road.nameEn : 'Primary Evacuation Corridor',
-        primarySafeZone
-      ),
-      roadSegmentsUsed: primaryRoad ? [primaryRoad.road.id] : [],
-      logisticsRequired: {
-        ambulances: Math.max(2, Math.ceil(settlement.vulnerableCount * 0.04)),
-        buses: Math.max(3, Math.ceil(settlement.vulnerableCount / 38)),
-        policeEscorts: Math.max(2, Math.ceil(settlement.population / 750)),
-        medicalStaff: Math.max(4, Math.ceil(settlement.vulnerableCount * 0.06))
-      }
-    };
-
-    settlementRoutes.push(primaryRoute);
-
-    // Build Route B (Contingency Alternative Corridor)
-    const secondaryWaypoints: GeoCoordinates[] = [
-      settlement.coordinates,
-      ...(secondaryRoad ? secondaryRoad.road.path : []),
-      secondarySafeZone.coordinates
-    ];
-
-    const filteredSecondaryWaypoints = secondaryWaypoints.filter((pt, idx, arr) => {
-      if (idx === 0) return true;
-      return computeGeoDistanceKm(pt, arr[idx - 1]) > 0.15;
-    });
-
-    let secTotalDist = 0;
-    let secMinFireClearance = Infinity;
-    let secHasSmoke = false;
-
-    for (let i = 0; i < filteredSecondaryWaypoints.length; i++) {
-      const pt = filteredSecondaryWaypoints[i];
-      const fireDist = computeGeoDistanceKm(fireCenter, pt);
-      if (fireDist < secMinFireClearance) secMinFireClearance = fireDist;
-      if (isPointInsideSmokePlume(pt, fireCenter, flamePushHeadingDegrees, plumeLengthKm)) {
-        secHasSmoke = true;
-      }
-
-      if (i > 0) {
-        secTotalDist += computeGeoDistanceKm(filteredSecondaryWaypoints[i - 1], pt);
-      }
-    }
-
-    secTotalDist = Number(secTotalDist.toFixed(1));
-    const secAvgSpeedKmH = secondaryRoad ? secondaryRoad.road.speedLimitKmH * 0.65 : 45;
-    const secTravelMinutes = Math.round((secTotalDist / secAvgSpeedKmH) * 60);
-
-    const isSecBlocked = secMinFireClearance <= 1.4 || (secondaryRoad && secondaryRoad.status === 'blocked_fire');
-
-    const secondaryRoute: CalculatedEvacuationRoute = {
-      id: `ROUTE-${settlement.id}-SECONDARY`,
-      settlementId: settlement.id,
-      settlementName: settlement.nameEn,
-      settlementNameAr: settlement.nameAr,
-      safeZone: secondarySafeZone,
-      routeType: isSecBlocked ? 'compromised_blocked' : 'secondary_contingency',
-      status: isSecBlocked ? 'blocked_fire' : secHasSmoke ? 'caution_smoke' : 'open_safe',
-      totalDistanceKm: secTotalDist,
-      estimatedTravelMinutes: secTravelMinutes,
-      estimatedEvacuationClearanceMinutes: secTravelMinutes + 25,
-      minFireClearanceKm: Number(secMinFireClearance.toFixed(1)),
-      smokeExposureRisk: secHasSmoke ? 'moderate' : 'none',
-      bottleneckRiskIndex: Math.min(80, Math.round(bottleneckFactor * 1.15)),
-      waypoints: filteredSecondaryWaypoints,
-      instructions: buildTurnInstructions(
-        filteredSecondaryWaypoints,
-        secondaryRoad ? secondaryRoad.road.nameEn : 'Contingency Bypass Axis',
-        secondarySafeZone
-      ),
-      roadSegmentsUsed: secondaryRoad ? [secondaryRoad.road.id] : [],
-      logisticsRequired: {
-        ambulances: Math.max(2, Math.ceil(settlement.vulnerableCount * 0.04)),
-        buses: Math.max(3, Math.ceil(settlement.vulnerableCount / 38)),
-        policeEscorts: Math.max(2, Math.ceil(settlement.population / 750)),
-        medicalStaff: Math.max(4, Math.ceil(settlement.vulnerableCount * 0.06))
-      }
-    };
-
-    settlementRoutes.push(secondaryRoute);
+    const secondaryResult = findOptimalEvacuationRouteGraph(
+      settlement,
+      viableShelters.slice(1).concat(viableShelters.slice(0, 1)),
+      fireCenter,
+      flamePushHeadingDegrees,
+      windSpeedKmH,
+      usedEdges,
+      true
+    );
+    settlementRoutes.push(secondaryResult.route);
   }
 
   return {

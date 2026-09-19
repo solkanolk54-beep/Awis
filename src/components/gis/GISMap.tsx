@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   Plus, 
   Minus, 
@@ -36,7 +36,8 @@ import {
   Info,
   X,
   CheckCircle2,
-  Truck
+  Truck,
+  Zap
 } from 'lucide-react';
 import { 
   WildfireIncident, 
@@ -73,7 +74,12 @@ import {
 import { 
   generateForestNdviPixels, 
   getNdviColorStop, 
-  NdviRasterPixel 
+  NdviRasterPixel,
+  DroughtScenarioKey,
+  DROUGHT_SCENARIO_PRESETS,
+  calculateDynamicForestNdvi,
+  DynamicForestAssessment,
+  DynamicNdviCalculationResult
 } from '../../services/ndviService';
 import { InteractiveNdviLegend } from '../forest/InteractiveNdviLegend';
 import { 
@@ -92,6 +98,13 @@ import { AT_RISK_SETTLEMENTS, CivilianSettlement } from '../../data/algerianRoad
 import { CalculatedEvacuationRoute } from '../../types';
 import { DynamicFireFrontLayer } from './DynamicFireFrontLayer';
 import { FireFrontSimulationHUD } from './FireFrontSimulationHUD';
+import { FireFrontDynamicsLayer } from './FireFrontDynamicsLayer';
+import { FireFrontDynamicsHUD } from './FireFrontDynamicsHUD';
+import { 
+  calculateFireFrontDynamics, 
+  FireFrontDynamicsResult, 
+  FireFrontPolylineVertex 
+} from '../../services/fireFrontDynamicsService';
 import { ResourceDeploymentAdvisorHUD } from './ResourceDeploymentAdvisorHUD';
 import { 
   FireFrontPhysicsEngine, 
@@ -99,6 +112,14 @@ import {
   FireFrontVertex, 
   PhysicalFireFrontSimulationResult 
 } from '../../services/fireFrontPhysicsEngine';
+import { TerrainSteepnessOverlay } from './TerrainSteepnessOverlay';
+import { TerrainSteepnessHUD } from './TerrainSteepnessHUD';
+import { 
+  generateRegionalSteepnessGrid, 
+  CRITICAL_ESCARPMENT_ZONES, 
+  TerrainSteepnessCell, 
+  CriticalEscarpmentZone 
+} from '../../services/terrainSteepnessService';
 
 interface GISMapProps {
   incidents: WildfireIncident[];
@@ -158,9 +179,6 @@ export const GISMap: React.FC<GISMapProps> = ({
   onPromoteClusterToIncident
 }) => {
   const t = translations[currentLang];
-
-  // Automated Resource Deployment Advisor State
-  const [showAdvisorHUD, setShowAdvisorHUD] = useState<boolean>(false);
 
   // NASA FIRMS Satellite Detections State
   const [internalFirmsHotspots, setInternalFirmsHotspots] = useState<FirmsDetection[]>([]);
@@ -258,40 +276,134 @@ export const GISMap: React.FC<GISMapProps> = ({
     return dronePatrolIncident ? computeDroneTacticalAssessment(dronePatrolIncident) : activeDroneMission.assessment;
   }, [dronePatrolIncident, activeDroneMission.assessment]);
 
-  // Layer Visibility State
+  // Layer Visibility State (Prioritizes fast, non-cluttered base layers by default)
   const [layers, setLayers] = useState({
     wilayas: true,
     forests: true,
-    ndvi: true, // Toggleable Sentinel-2 NDVI Vegetation Health Layer
+    ndvi: false, // Toggleable Sentinel-2 NDVI Vegetation Health Layer
     riskHeatmap: true,
     incidents: true,
     nasaFirms: true, // Toggleable NASA FIRMS Satellite Layer
-    firmsHeatmap: true, // Toggleable Satellite Wildfire Risk Density Heatmap Layer
-    firmsClusters: true, // Toggleable Active Incident Zones (Spatial Clusters) Layer
-    spreadIsochrones: true,
+    firmsHeatmap: false, // Toggleable Satellite Wildfire Risk Density Heatmap Layer
+    firmsClusters: false, // Toggleable Active Incident Zones (Spatial Clusters) Layer
+    spreadIsochrones: false, // Toggleable Fire Spread Projection Layer
     waterPoints: true,
     civilProtection: true,
     watchtowers: true,
-    drones: true,
+    drones: false,
     windVectors: true,
-    resourceHeatmap: true, // Toggleable Emergency Resources Available vs Needed Heatmap Layer
-    evacuationPlanner: true, // Toggleable Smart Evacuation Planner & Safe Corridors Layer
-    physicalFireFront: false // Toggleable Rothermel Physical Fire Front Simulation Layer
+    resourceHeatmap: false, // Toggleable Emergency Resources Available vs Needed Heatmap Layer
+    evacuationPlanner: false, // Toggleable Smart Evacuation Planner & Safe Corridors Layer
+    physicalFireFront: false, // Toggleable Rothermel Physical Fire Front Simulation Layer
+    fireFrontDynamics: false, // Toggleable Fire Front Dynamics Service & Active Expansion Edge Polyline
+    terrainSteepnessHeatmap: false // Toggleable Terrain Steepness & Firefighting Machinery Mobility Heatmap Layer (DEM)
   });
+
+  // Centralized Mutual-Exclusivity Tactical HUD Manager:
+  // Guarantees that at most ONE tactical analytical HUD is displayed at any time,
+  // completely preventing visual clutter and overlapping stacked panels ("المواد المتراكمة فوق بعضها").
+  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources';
+  const [activeHUD, setActiveHUD] = useState<ActiveTacticalHUD>('none');
+
+  const showProjectionHUD = activeHUD === 'projection';
+  const setShowProjectionHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'projection';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'projection' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showEvacHUD = activeHUD === 'evac';
+  const setShowEvacHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'evac';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'evac' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showFireFrontDynamicsHUD = activeHUD === 'frontDynamics';
+  const setShowFireFrontDynamicsHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'frontDynamics';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'frontDynamics' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showFireFrontHUD = activeHUD === 'rothermel';
+  const setShowFireFrontHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'rothermel';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'rothermel' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showAdvisorHUD = activeHUD === 'advisor';
+  const setShowAdvisorHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'advisor';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'advisor' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showSteepnessHUD = activeHUD === 'steepness';
+  const setShowSteepnessHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'steepness';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'steepness' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showResourceHUD = activeHUD === 'resources';
+  const setShowResourceHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'resources';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'resources' : (isCurr ? 'none' : curr);
+    });
+  }, []);
 
   // --- Smart Evacuation Planner State & Calculations ---
   const [selectedEvacSettlement, setSelectedEvacSettlement] = useState<CivilianSettlement>(AT_RISK_SETTLEMENTS[0]);
   const [selectedEvacRoute, setSelectedEvacRoute] = useState<CalculatedEvacuationRoute | null>(null);
-  const [showEvacHUD, setShowEvacHUD] = useState<boolean>(true);
   const [showEvacRoadNetwork, setShowEvacRoadNetwork] = useState<boolean>(true);
   const [showEvacSmokeCone, setShowEvacSmokeCone] = useState<boolean>(true);
   const [showEvacShelters, setShowEvacShelters] = useState<boolean>(true);
 
+  // Temporary Dynamic Evacuation Path Lifecycle State
+  const [evacGenerationTriggerKey, setEvacGenerationTriggerKey] = useState<number>(() => Date.now());
+  const [isTemporaryDynamicActive, setIsTemporaryDynamicActive] = useState<boolean>(false);
+  const [temporaryCountdownSeconds, setTemporaryCountdownSeconds] = useState<number>(45);
+  const [isTemporaryPinned, setIsTemporaryPinned] = useState<boolean>(false);
+  const [showAlertBanner, setShowAlertBanner] = useState<boolean>(false);
+
+  // Identify confirmed fire incident for evacuation routing
+  const confirmedFireIncident = useMemo(() => {
+    if (
+      selectedIncident &&
+      (selectedIncident.status === 'confirmed' ||
+        selectedIncident.status === 'active_response' ||
+        selectedIncident.riskLevel === 'critical' ||
+        selectedIncident.riskLevel === 'extreme')
+    ) {
+      return selectedIncident;
+    }
+    const foundConfirmed = incidents.find(
+      (inc) => inc.status === 'confirmed' || inc.status === 'active_response'
+    );
+    return foundConfirmed || selectedIncident || incidents[0] || null;
+  }, [selectedIncident, incidents]);
+
   // Active fire origin for evacuation routing calculation
   const evacFireCenter = useMemo(() => {
-    if (selectedIncident?.coordinates) return selectedIncident.coordinates;
+    if (confirmedFireIncident?.coordinates) return confirmedFireIncident.coordinates;
     return { lat: 36.781, lng: 5.722 };
-  }, [selectedIncident]);
+  }, [confirmedFireIncident]);
 
   const evacWindHeading = useMemo(() => {
     return liveWeather?.windDirectionDegrees !== undefined 
@@ -303,15 +415,86 @@ export const GISMap: React.FC<GISMapProps> = ({
     return liveWeather?.windSpeedKmH || 38;
   }, [liveWeather]);
 
+  // Trigger temporary dynamic path & AlertBanner when recalculating or switching settlements
+  const handleGenerateOrRecalculateRoute = (settlement?: CivilianSettlement) => {
+    if (settlement) {
+      setSelectedEvacSettlement(settlement);
+    }
+    setSelectedEvacRoute(null);
+    const newKey = Date.now();
+    setEvacGenerationTriggerKey(newKey);
+    setIsTemporaryDynamicActive(true);
+    setTemporaryCountdownSeconds(45);
+    setIsTemporaryPinned(false);
+    setShowAlertBanner(true);
+    setLayers((l) => ({ ...l, evacuationPlanner: true }));
+  };
+
+  const handleExtendTemporary = () => {
+    setTemporaryCountdownSeconds((prev) => prev + 30);
+    setIsTemporaryDynamicActive(true);
+  };
+
+  const handlePinPermanent = () => {
+    setIsTemporaryPinned(true);
+    setIsTemporaryDynamicActive(true);
+  };
+
+  // Countdown timer for temporary dynamic path
+  useEffect(() => {
+    if (!isTemporaryDynamicActive || isTemporaryPinned) return;
+    if (temporaryCountdownSeconds <= 0) {
+      setIsTemporaryDynamicActive(false);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTemporaryCountdownSeconds((prev) => {
+        if (prev <= 1) {
+          setIsTemporaryDynamicActive(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isTemporaryDynamicActive, isTemporaryPinned, temporaryCountdownSeconds]);
+
+  // If confirmed fire incident changes, dynamically align with the nearest at-risk settlement
+  useEffect(() => {
+    if (!confirmedFireIncident?.coordinates) return;
+    const fireLat = confirmedFireIncident.coordinates.lat;
+    const fireLng = confirmedFireIncident.coordinates.lng;
+
+    let closestSettlement = AT_RISK_SETTLEMENTS[0];
+    let minDistance = Infinity;
+    AT_RISK_SETTLEMENTS.forEach((settle) => {
+      const dist = computeDistanceKm(
+        { lat: fireLat, lng: fireLng },
+        settle.coordinates
+      );
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestSettlement = settle;
+      }
+    });
+
+    if (closestSettlement && closestSettlement.id !== selectedEvacSettlement.id) {
+      setSelectedEvacSettlement(closestSettlement);
+      handleGenerateOrRecalculateRoute(closestSettlement);
+    }
+  }, [confirmedFireIncident?.id]);
+
   // Compute dynamic smart evacuation scenario using Algerian road network
   const evacuationPlan = useMemo(() => {
     return calculateSmartEvacuationPlan(
       evacFireCenter,
       evacWindHeading,
       evacWindSpeed,
-      selectedIncident?.id || 'INC-ACTIVE'
+      confirmedFireIncident?.id || selectedIncident?.id || 'INC-ACTIVE'
     );
-  }, [evacFireCenter, evacWindHeading, evacWindSpeed, selectedIncident]);
+  }, [evacFireCenter, evacWindHeading, evacWindSpeed, confirmedFireIncident, selectedIncident]);
 
   // Active evacuation route (either user-selected or the primary route for the selected settlement)
   const activeEvacRoute = useMemo(() => {
@@ -329,7 +512,6 @@ export const GISMap: React.FC<GISMapProps> = ({
   const [showFireFrontIsochrones, setShowFireFrontIsochrones] = useState<boolean>(true);
   const [showFireFrontDemBadges, setShowFireFrontDemBadges] = useState<boolean>(true);
   const [selectedFireFrontVertex, setSelectedFireFrontVertex] = useState<FireFrontVertex | null>(null);
-  const [showFireFrontHUD, setShowFireFrontHUD] = useState<boolean>(false);
 
   const [fireFrontConfig, setFireFrontConfig] = useState<FireFrontSimulationConfig>({
     origin: { lat: 36.781, lng: 5.722 },
@@ -361,12 +543,75 @@ export const GISMap: React.FC<GISMapProps> = ({
     );
   }, [fireFrontConfig, fireFrontTimeMinutes, selectedIncident, forests]);
 
+  // --- Fire Front Dynamics Service & Periodic Vector Engine State ---
+  const [isDynamicsPeriodicActive, setIsDynamicsPeriodicActive] = useState<boolean>(true);
+  const [dynamicsPeriodicIntervalSeconds, setDynamicsPeriodicIntervalSeconds] = useState<number>(3);
+  const [dynamicsSimulationClockMinutes, setDynamicsSimulationClockMinutes] = useState<number>(60);
+  const [dynamicsCycleCount, setDynamicsCycleCount] = useState<number>(0);
+  const [showDynamicsVectors, setShowDynamicsVectors] = useState<boolean>(true);
+  const [showDynamicsHistoricalTrails, setShowDynamicsHistoricalTrails] = useState<boolean>(true);
+  const [showDynamicsVertexNodes, setShowDynamicsVertexNodes] = useState<boolean>(true);
+  const [selectedDynamicsVertex, setSelectedDynamicsVertex] = useState<FireFrontPolylineVertex | null>(null);
+
+  // Compute Fire Front Dynamics Result (Fused Multi-hour Wind + DEM Terrain Normal Kinematics)
+  const fireFrontDynamicsResult = useMemo<FireFrontDynamicsResult>(() => {
+    const origin = selectedIncident?.coordinates || { lat: 36.781, lng: 5.722 };
+    return calculateFireFrontDynamics(
+      origin,
+      selectedIncident || undefined,
+      {
+        fuelMoisturePct: 8.5,
+        baseFuelRateMMin: 2.8
+      },
+      dynamicsSimulationClockMinutes,
+      dynamicsCycleCount
+    );
+  }, [selectedIncident, dynamicsSimulationClockMinutes, dynamicsCycleCount]);
+
+  // Periodic Dynamic Update Loop: advances active front polyline periodically
+  useEffect(() => {
+    if (!layers.fireFrontDynamics || !isDynamicsPeriodicActive) return;
+
+    const interval = setInterval(() => {
+      setDynamicsSimulationClockMinutes((prev) => prev + 5);
+      setDynamicsCycleCount((prev) => prev + 1);
+    }, dynamicsPeriodicIntervalSeconds * 1000);
+
+    return () => clearInterval(interval);
+  }, [layers.fireFrontDynamics, isDynamicsPeriodicActive, dynamicsPeriodicIntervalSeconds]);
+
+  // Manual step forward
+  const handleDynamicsStepForward = (minutes = 10) => {
+    setDynamicsSimulationClockMinutes((prev) => prev + minutes);
+    setDynamicsCycleCount((prev) => prev + 1);
+  };
+
+  // Reset dynamics baseline
+  const handleResetDynamics = () => {
+    setDynamicsSimulationClockMinutes(60);
+    setDynamicsCycleCount(0);
+  };
+
   // Emergency Resource Heatmap & Asset Optimization State
   const [resourceHeatmapMode, setResourceHeatmapMode] = useState<ResourceHeatmapMode>('balance');
   const [resourceHeatmapOpacity, setResourceHeatmapOpacity] = useState<number>(0.75);
   const [selectedWilayaBalance, setSelectedWilayaBalance] = useState<WilayaResourceBalance | null>(null);
   const [resourceFilter, setResourceFilter] = useState<'all' | 'deficit_only' | 'surplus_only'>('all');
   const [transferredResources, setTransferredResources] = useState<EmergencyResource[]>(resources);
+
+  // --- Terrain Steepness Heatmap & Machinery Mobility State (DEM Analysis) ---
+  const [terrainSteepnessOpacity, setTerrainSteepnessOpacity] = useState<number>(0.75);
+  const [terrainSteepnessMode, setTerrainSteepnessMode] = useState<'all' | 'critical_only' | 'machinery_access' | 'ground_crew_safety'>('all');
+  const [showSteepnessBlobs, setShowSteepnessBlobs] = useState<boolean>(true);
+  const [showSteepnessVectors, setShowSteepnessVectors] = useState<boolean>(true);
+  const [showSteepnessBadges, setShowSteepnessBadges] = useState<boolean>(true);
+  const [selectedSteepnessCell, setSelectedSteepnessCell] = useState<TerrainSteepnessCell | null>(null);
+  const [selectedCriticalEscarpment, setSelectedCriticalEscarpment] = useState<CriticalEscarpmentZone | null>(null);
+
+  // Pre-generate regional terrain steepness grid from DEM data
+  const regionalSteepnessData = useMemo(() => {
+    return generateRegionalSteepnessGrid();
+  }, []);
 
   // Synchronize internal transferred resources when external resources change
   useEffect(() => {
@@ -417,19 +662,59 @@ export const GISMap: React.FC<GISMapProps> = ({
     });
   };
 
-  // Multi-Spectral NDVI Vegetation Health Layer State
+  // Multi-Spectral NDVI & Drought Stress Layer Dynamic State
   const [ndviOpacity, setNdviOpacity] = useState<number>(0.70);
   const [ndviFilter, setNdviFilter] = useState<'all' | 'critical_drought' | 'moisture_stressed' | 'moderate' | 'healthy_dense'>('all');
   const [hoveredNdviPixel, setHoveredNdviPixel] = useState<NdviRasterPixel | null>(null);
+  const [showNdviControl, setShowNdviControl] = useState<boolean>(false);
+  const [isCalculatingNdvi, setIsCalculatingNdvi] = useState<boolean>(false);
+  const [droughtStressFactor, setDroughtStressFactor] = useState<number>(-0.09); // Default: Late Summer Aridity
+  const [selectedScenarioKey, setSelectedScenarioKey] = useState<DroughtScenarioKey>('late_summer');
+  const [sensorNirScale, setSensorNirScale] = useState<number>(0.91);
+  const [sensorRedScale, setSensorRedScale] = useState<number>(1.12);
+  const [lastNdviCalcTimestamp, setLastNdviCalcTimestamp] = useState<string>(() => new Date().toLocaleTimeString());
 
-  const ndviPixels = useMemo(() => {
-    return generateForestNdviPixels(forests);
-  }, [forests]);
+  // Dynamic NDVI & Drought Stress Calculation Engine
+  const dynamicNdviResult = useMemo(() => {
+    return calculateDynamicForestNdvi(forests, {
+      droughtStressFactor,
+      scenarioKey: selectedScenarioKey,
+      sensorNirScale,
+      sensorRedScale
+    });
+  }, [forests, droughtStressFactor, selectedScenarioKey, sensorNirScale, sensorRedScale]);
 
   const filteredNdviPixels = useMemo(() => {
-    if (ndviFilter === 'all') return ndviPixels;
-    return ndviPixels.filter(p => p.stressCategory === ndviFilter);
-  }, [ndviPixels, ndviFilter]);
+    if (ndviFilter === 'all') return dynamicNdviResult.pixels;
+    return dynamicNdviResult.pixels.filter(p => p.stressCategory === ndviFilter);
+  }, [dynamicNdviResult.pixels, ndviFilter]);
+
+  const handleApplyScenario = (scenario: typeof DROUGHT_SCENARIO_PRESETS[number]) => {
+    setSelectedScenarioKey(scenario.key);
+    setDroughtStressFactor(scenario.stressFactor);
+    setSensorNirScale(scenario.nirMultiplier);
+    setSensorRedScale(scenario.redMultiplier);
+    setLastNdviCalcTimestamp(new Date().toLocaleTimeString());
+    if (!layers.ndvi) {
+      setLayers(prev => ({ ...prev, ndvi: true }));
+    }
+  };
+
+  const handleTriggerNdviRecalculation = () => {
+    setIsCalculatingNdvi(true);
+    if (!layers.ndvi) {
+      setLayers(prev => ({ ...prev, ndvi: true }));
+    }
+    setTimeout(() => {
+      setIsCalculatingNdvi(false);
+      setLastNdviCalcTimestamp(new Date().toLocaleTimeString());
+    }, 380);
+  };
+
+  const currentScenarioObj = DROUGHT_SCENARIO_PRESETS.find(s => s.key === selectedScenarioKey);
+  const appliedScenarioLabel = currentScenarioObj 
+    ? (currentLang === 'ar' ? currentScenarioObj.labelAr : currentLang === 'fr' ? currentScenarioObj.labelFr : currentScenarioObj.labelEn)
+    : (currentLang === 'ar' ? 'مخصص' : 'Custom');
 
   // FIRMS Satellite Wildfire Risk Density Heatmap Opacity State
   const [firmsHeatmapOpacity, setFirmsHeatmapOpacity] = useState<number>(0.65);
@@ -468,7 +753,6 @@ export const GISMap: React.FC<GISMapProps> = ({
   // Fire Spread Projection State (Dynamic Live Weather & Terrain Model)
   const [projectionHorizon, setProjectionHorizon] = useState<30 | 60 | 180 | 360 | 'all'>('all');
   const [projectionTargetMode, setProjectionTargetMode] = useState<'confirmed_active' | 'selected' | 'all'>('confirmed_active');
-  const [showProjectionHUD, setShowProjectionHUD] = useState<boolean>(true);
   const [selectedProjectionIncidentId, setSelectedProjectionIncidentId] = useState<string | null>(null);
 
   // Compute dynamic Fire Spread Projections using Live Weather (wind direction/speed) and Terrain data
@@ -660,7 +944,25 @@ export const GISMap: React.FC<GISMapProps> = ({
   };
 
   const toggleLayer = (layerKey: keyof typeof layers) => {
-    setLayers((prev) => ({ ...prev, [layerKey]: !prev[layerKey] }));
+    setLayers((prev) => {
+      const willBeActive = !prev[layerKey];
+      if (!willBeActive) {
+        if (layerKey === 'spreadIsochrones') setShowProjectionHUD(false);
+        if (layerKey === 'evacuationPlanner') setShowEvacHUD(false);
+        if (layerKey === 'fireFrontDynamics') setShowFireFrontDynamicsHUD(false);
+        if (layerKey === 'resourceHeatmap') setShowResourceHUD(false);
+        if (layerKey === 'physicalFireFront') setShowFireFrontHUD(false);
+        if (layerKey === 'terrainSteepnessHeatmap') setShowSteepnessHUD(false);
+      } else {
+        if (layerKey === 'spreadIsochrones') setShowProjectionHUD(true);
+        if (layerKey === 'evacuationPlanner') setShowEvacHUD(true);
+        if (layerKey === 'fireFrontDynamics') setShowFireFrontDynamicsHUD(true);
+        if (layerKey === 'resourceHeatmap') setShowResourceHUD(true);
+        if (layerKey === 'physicalFireFront') setShowFireFrontHUD(true);
+        if (layerKey === 'terrainSteepnessHeatmap') setShowSteepnessHUD(true);
+      }
+      return { ...prev, [layerKey]: willBeActive };
+    });
   };
 
   const getRiskColor = (level: RiskLevel) => {
@@ -1033,6 +1335,229 @@ export const GISMap: React.FC<GISMapProps> = ({
             )}
           </div>
 
+          {/* Normalized Difference Vegetation Index (NDVI) & Drought Health Dynamic Calculation Pill */}
+          <div className="relative flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-ndvi-overlay"
+              onClick={() => toggleLayer('ndvi')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                layers.ndvi
+                  ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-lime-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'حساب وتراكب مؤشر صحة الغطاء النباتي وإجهاد الجفاف (Sentinel-2 NDVI)'
+                  : 'Calculate and overlay Normalized Difference Vegetation Index (Sentinel-2 NDVI) to assess forest health and drought stress'
+              }
+            >
+              <Trees className={`w-3.5 h-3.5 ${layers.ndvi ? 'text-emerald-100 animate-pulse' : 'text-slate-400'}`} />
+              <span>{t.ndviCalculateOverlay || (currentLang === 'ar' ? 'مؤشر الغطاء (NDVI)' : 'NDVI Health')}</span>
+              <span
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono font-bold ${
+                  layers.ndvi
+                    ? dynamicNdviResult.nationalSummary.criticalPercent > 25
+                      ? 'bg-red-950/90 text-red-200 border border-red-400/60'
+                      : dynamicNdviResult.nationalSummary.criticalPercent > 12
+                      ? 'bg-amber-950/90 text-amber-200 border border-amber-400/50'
+                      : 'bg-emerald-950/90 text-emerald-200 border border-emerald-400/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {layers.ndvi ? `${dynamicNdviResult.nationalSummary.averageNationalNdvi} NDVI` : 'OFF'}
+              </span>
+            </button>
+
+            <div className="h-4 w-px bg-slate-700 mx-1" />
+
+            {/* Popover trigger button for dynamic calculation parameters */}
+            <button
+              id="btn-toggle-ndvi-settings"
+              onClick={() => setShowNdviControl(!showNdviControl)}
+              className={`p-1 rounded transition cursor-pointer ${
+                showNdviControl ? 'bg-emerald-900/90 text-white shadow' : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'ضبط معايير الحساب الطيفي ومستوى إجهاد الجفاف'
+                  : 'Configure Spectral Parameters & Drought Stress Assessment'
+              }
+            >
+              <SlidersHorizontal className="w-3 h-3 text-emerald-300" />
+            </button>
+
+            {/* Dynamic NDVI Calculation & Assessment Popover Dropdown */}
+            {showNdviControl && (
+              <div 
+                className="absolute top-full mt-2 left-0 z-40 w-80 sm:w-96 p-4 bg-slate-950/95 backdrop-blur-xl border border-emerald-500/50 rounded-xl shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2 text-slate-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header with Sentinel-2 MSI branding */}
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-400">
+                      <Satellite className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-100 text-xs flex items-center gap-1.5">
+                        <span>{t.ndviCalculateOverlay || (currentLang === 'ar' ? 'حساب وتراكب مؤشر الغطاء النباتي' : 'NDVI Spectral Calculation & Overlay')}</span>
+                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                          Sentinel-2 MSI
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {t.ndviCalculateOverlayDesc || (currentLang === 'ar' ? 'معايرة النطاقات الطيفية وتقييم إجهاد الجفاف' : 'Spectral reflectance calibration & drought stress modeling')}
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowNdviControl(false)}
+                    className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Sentinel-2 Spectral Formula Display */}
+                <div className="p-2 rounded-lg bg-slate-900/90 border border-emerald-500/20 flex items-center justify-between text-[10px] font-mono">
+                  <div className="flex items-center gap-1.5 text-emerald-300">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>NDVI = (NIR B8 - Red B4) / (NIR B8 + Red B4)</span>
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-sans">10m Res</span>
+                </div>
+
+                {/* Layer Toggle & Opacity Slider */}
+                <div className="flex items-center justify-between gap-2 p-2 bg-slate-900/60 rounded-lg border border-slate-800">
+                  <button
+                    onClick={() => toggleLayer('ndvi')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded flex items-center gap-1.5 transition cursor-pointer ${
+                      layers.ndvi
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{layers.ndvi ? (currentLang === 'ar' ? 'الطبقة مفعّلة' : 'Layer Active') : (currentLang === 'ar' ? 'تفعيل الطبقة' : 'Enable Layer')}</span>
+                  </button>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-400 text-[11px] font-mono">{Math.round(ndviOpacity * 100)}%</span>
+                    <input 
+                      type="range"
+                      min="0.15"
+                      max="0.95"
+                      step="0.05"
+                      value={ndviOpacity}
+                      onChange={(e) => setNdviOpacity(parseFloat(e.target.value))}
+                      className="w-24 accent-emerald-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                      title="Overlay Opacity"
+                    />
+                  </div>
+                </div>
+
+                {/* Climatic Scenario Presets */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                    <span>{t.ndviScenarioLabel || (currentLang === 'ar' ? 'السيناريو المناخي الموسمي:' : 'Seasonal Climatic Scenario:')}</span>
+                    <span className="text-[10px] font-mono text-emerald-400">
+                      {selectedScenarioKey !== 'custom' ? selectedScenarioKey : 'Custom'}
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                    {DROUGHT_SCENARIO_PRESETS.map((sc) => (
+                      <button
+                        key={sc.key}
+                        onClick={() => handleApplyScenario(sc)}
+                        className={`p-1.5 text-left rounded border transition cursor-pointer ${
+                          selectedScenarioKey === sc.key
+                            ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 shadow-sm'
+                            : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                        }`}
+                      >
+                        <div className="font-semibold truncate">
+                          {currentLang === 'ar' ? sc.labelAr : currentLang === 'fr' ? sc.labelFr : sc.labelEn}
+                        </div>
+                        <div className="text-[9px] font-mono opacity-80">
+                          {sc.stressFactor > 0 ? `+${sc.stressFactor}` : sc.stressFactor} ΔNDVI
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Dynamic Drought Stress Slider */}
+                <div className="space-y-1.5 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-slate-300 flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 text-amber-400" />
+                      {t.ndviDroughtSeverity || (currentLang === 'ar' ? 'عامل إجهاد الجفاف والحرارة:' : 'Drought Stress Severity Factor:')}
+                    </span>
+                    <span className={`font-mono font-bold text-xs ${
+                      droughtStressFactor < -0.15 ? 'text-red-400' : droughtStressFactor < 0 ? 'text-amber-400' : 'text-emerald-400'
+                    }`}>
+                      {droughtStressFactor > 0 ? `+${droughtStressFactor.toFixed(2)}` : droughtStressFactor.toFixed(2)}
+                    </span>
+                  </div>
+                  <input 
+                    type="range"
+                    min="-0.35"
+                    max="0.25"
+                    step="0.01"
+                    value={droughtStressFactor}
+                    onChange={(e) => {
+                      setSelectedScenarioKey('custom');
+                      setDroughtStressFactor(parseFloat(e.target.value));
+                      if (!layers.ndvi) setLayers(prev => ({ ...prev, ndvi: true }));
+                    }}
+                    className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                    <span className="text-red-400/80">{currentLang === 'ar' ? 'جفاف حاد' : 'Severe Aridity (-0.35)'}</span>
+                    <span>{currentLang === 'ar' ? 'مرجعي (0.0)' : 'Baseline'}</span>
+                    <span className="text-emerald-400/80">{currentLang === 'ar' ? 'رطوبة عالية' : 'High Moisture (+0.25)'}</span>
+                  </div>
+                </div>
+
+                {/* Recalculate & Overlay Execution Button */}
+                <div className="pt-1">
+                  <button
+                    id="btn-recalculate-ndvi-overlay"
+                    onClick={handleTriggerNdviRecalculation}
+                    disabled={isCalculatingNdvi}
+                    className="w-full py-2 px-3 rounded-lg font-bold text-xs bg-gradient-to-r from-emerald-600 via-teal-600 to-lime-600 hover:from-emerald-500 hover:to-lime-500 text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCalculatingNdvi ? 'animate-spin' : ''}`} />
+                    <span>
+                      {isCalculatingNdvi
+                        ? (t.ndviCalculating || (currentLang === 'ar' ? 'جاري الحساب الطيفي...' : 'Calculating Spectral NDVI...'))
+                        : (t.ndviRecalculateBtn || (currentLang === 'ar' ? 'حساب وتحديث طبقة NDVI' : 'Recalculate & Overlay NDVI Layer'))}
+                    </span>
+                  </button>
+                  <div className="text-center text-[9px] text-slate-500 mt-1 font-mono">
+                    {currentLang === 'ar' ? 'آخر حساب طيفي:' : 'Last calculated:'} {lastNdviCalcTimestamp}
+                  </div>
+                </div>
+
+                {/* Dynamic Summary Cards */}
+                <div className="grid grid-cols-3 gap-1.5 text-center font-mono text-[10px]">
+                  <div className="p-1.5 bg-slate-900 rounded border border-slate-800">
+                    <div className="text-[9px] text-slate-400 font-sans">{currentLang === 'ar' ? 'المعدل الوطني' : 'Avg NDVI'}</div>
+                    <div className="font-bold text-amber-300 text-xs">{dynamicNdviResult.nationalSummary.averageNationalNdvi}</div>
+                  </div>
+                  <div className="p-1.5 bg-slate-900 rounded border border-slate-800">
+                    <div className="text-[9px] text-slate-400 font-sans">{currentLang === 'ar' ? 'إجهاد حرج' : 'Crit Drought'}</div>
+                    <div className="font-bold text-red-400 text-xs">{dynamicNdviResult.nationalSummary.criticalPercent}%</div>
+                  </div>
+                  <div className="p-1.5 bg-slate-900 rounded border border-slate-800">
+                    <div className="text-[9px] text-slate-400 font-sans">{currentLang === 'ar' ? 'رطوبة الوقود' : 'Canopy FMC'}</div>
+                    <div className="font-bold text-emerald-400 text-xs">{dynamicNdviResult.nationalSummary.averageCanopyMoisture}%</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Active Incident Zones (Spatial Clustering) Quick-Toggle Pill */}
           <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
             <button
@@ -1184,6 +1709,22 @@ export const GISMap: React.FC<GISMapProps> = ({
                   : (currentLang === 'ar' ? 'متوازن' : 'Balanced')}
               </span>
             </button>
+
+            {layers.resourceHeatmap && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1" />
+                <button
+                  id="btn-toggle-resource-hud"
+                  onClick={() => setShowResourceHUD(!showResourceHUD)}
+                  className={`p-1 rounded transition cursor-pointer ${
+                    showResourceHUD ? 'bg-red-950/90 text-red-300 border border-red-600/40' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={currentLang === 'ar' ? 'لوحة تحكم وتوزيع الموارد' : 'Toggle Resource Optimization HUD'}
+                >
+                  <SlidersHorizontal className="w-3 h-3 text-red-400" />
+                </button>
+              </>
+            )}
           </div>
 
           {/* Smart Civilian Evacuation Planner Quick-Toggle Pill */}
@@ -1219,6 +1760,21 @@ export const GISMap: React.FC<GISMapProps> = ({
               <>
                 <div className="h-4 w-px bg-slate-700 mx-1" />
                 <button
+                  id="btn-recalculate-evac-route"
+                  onClick={() => handleGenerateOrRecalculateRoute()}
+                  className="px-1.5 py-0.5 rounded transition cursor-pointer text-emerald-300 hover:text-white hover:bg-emerald-900/60 flex items-center gap-1 font-mono text-[11px]"
+                  title={
+                    currentLang === 'ar'
+                      ? 'إعادة توليد وتفعيل المسار المؤقت عبر خوارزمية الرسم البياني'
+                      : 'Trigger / Recalculate Temporary Dynamic Evacuation Path via Graph Pathfinding'
+                  }
+                >
+                  <Zap className="w-3 h-3 text-amber-400 animate-pulse" />
+                  <span className="hidden sm:inline font-bold">
+                    {isTemporaryDynamicActive ? `${temporaryCountdownSeconds}s` : 'RE-CALC'}
+                  </span>
+                </button>
+                <button
                   id="btn-toggle-evac-hud"
                   onClick={() => setShowEvacHUD(!showEvacHUD)}
                   className={`p-1 rounded transition cursor-pointer ${
@@ -1227,6 +1783,61 @@ export const GISMap: React.FC<GISMapProps> = ({
                   title={currentLang === 'ar' ? 'لوحة تحكم وتوجيه الإخلاء' : 'Toggle Evacuation Guidance HUD'}
                 >
                   <Compass className="w-3 h-3 text-emerald-400" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Fire Front Dynamics Quick-Toggle Pill (Active Expansion Edge Polyline) */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-fire-front-dynamics"
+              onClick={() => {
+                const next = !layers.fireFrontDynamics;
+                toggleLayer('fireFrontDynamics');
+                if (next) setShowFireFrontDynamicsHUD(true);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                layers.fireFrontDynamics
+                  ? 'bg-gradient-to-r from-orange-600 via-red-600 to-amber-600 text-white shadow ring-1 ring-orange-400/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'خدمة ديناميكيات جبهة النيران (حساب وتصيير بوليلاين الحافة النشطة بمتجهات الرياح والتضاريس والتحديث الدوري)'
+                  : 'Toggle Fire Front Dynamics (Active Expansion Edge Polyline with Periodic Updates)'
+              }
+            >
+              <div className="relative flex items-center justify-center">
+                <Flame className={`w-3.5 h-3.5 ${layers.fireFrontDynamics ? 'text-amber-200 animate-pulse' : 'text-slate-400'}`} />
+                {layers.fireFrontDynamics && isDynamicsPeriodicActive && (
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                )}
+              </div>
+              <span>{currentLang === 'ar' ? 'ديناميكيات الجبهة' : 'Front Dynamics'}</span>
+              <span
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono font-bold ${
+                  layers.fireFrontDynamics
+                    ? 'bg-orange-950/90 text-orange-200 border border-orange-400/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {layers.fireFrontDynamics ? `${fireFrontDynamicsResult.peakRateOfSpreadMMin}m/m` : 'OFF'}
+              </span>
+            </button>
+
+            {layers.fireFrontDynamics && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1" />
+                <button
+                  id="btn-toggle-dynamics-hud"
+                  onClick={() => setShowFireFrontDynamicsHUD(!showFireFrontDynamicsHUD)}
+                  className={`p-1 rounded transition cursor-pointer ${
+                    showFireFrontDynamicsHUD ? 'bg-orange-950/90 text-orange-300 border border-orange-600/40' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={currentLang === 'ar' ? 'لوحة تحكم ديناميكيات الجبهة' : 'Toggle Front Dynamics HUD'}
+                >
+                  <Activity className="w-3 h-3 text-orange-400" />
                 </button>
               </>
             )}
@@ -1275,6 +1886,56 @@ export const GISMap: React.FC<GISMapProps> = ({
                     showFireFrontHUD ? 'bg-red-950/90 text-red-300 border border-red-600/40' : 'text-slate-400 hover:text-white'
                   }`}
                   title={currentLang === 'ar' ? 'لوحة تحكم فيزياء الجبهة' : 'Toggle Physics Front HUD'}
+                >
+                  <Gauge className="w-3 h-3 text-amber-400" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Terrain Steepness Heatmap Quick-Toggle Pill (DEM Elevation & Machinery Risk) */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-terrain-steepness"
+              onClick={() => {
+                const next = !layers.terrainSteepnessHeatmap;
+                toggleLayer('terrainSteepnessHeatmap');
+                if (next) setShowSteepnessHUD(true);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                layers.terrainSteepnessHeatmap
+                  ? 'bg-gradient-to-r from-emerald-600 via-amber-600 to-rose-600 text-white shadow ring-1 ring-amber-400/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'الخريطة الحرارية لانحدار التضاريس: تقييم مخاطر حركية الشاحنات وتدحرج النيران'
+                  : 'Toggle Terrain Steepness Heatmap: Elevation DEM Slope & Fire Machinery Safety'
+              }
+            >
+              <Mountain className={`w-3.5 h-3.5 ${layers.terrainSteepnessHeatmap ? 'text-amber-200 animate-pulse' : 'text-slate-400'}`} />
+              <span>{currentLang === 'ar' ? 'انحدار التضاريس' : 'Terrain Steepness'}</span>
+              <span
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono font-bold ${
+                  layers.terrainSteepnessHeatmap
+                    ? 'bg-amber-950/90 text-amber-200 border border-amber-400/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {layers.terrainSteepnessHeatmap ? `Max ${regionalSteepnessData.summary.maxSlopeDegrees}°` : 'DEM'}
+              </span>
+            </button>
+
+            {layers.terrainSteepnessHeatmap && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1" />
+                <button
+                  id="btn-toggle-steepness-hud"
+                  onClick={() => setShowSteepnessHUD(!showSteepnessHUD)}
+                  className={`p-1 rounded transition cursor-pointer ${
+                    showSteepnessHUD ? 'bg-amber-950/90 text-amber-300 border border-amber-600/40' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={currentLang === 'ar' ? 'لوحة تحليل انحدار التضاريس ومخاطر الآليات' : 'Toggle Terrain Steepness HUD'}
                 >
                   <Gauge className="w-3 h-3 text-amber-400" />
                 </button>
@@ -1373,12 +2034,26 @@ export const GISMap: React.FC<GISMapProps> = ({
                     </span>
                   </span>
                 </label>
-                <input 
-                  type="checkbox" 
-                  checked={layers.ndvi} 
-                  onChange={() => toggleLayer('ndvi')} 
-                  className="rounded accent-emerald-500 cursor-pointer"
-                />
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowNdviControl(true);
+                      setShowLayerPanel(false);
+                    }}
+                    className="p-1 text-emerald-400 hover:text-white rounded hover:bg-emerald-900/60 transition cursor-pointer"
+                    title={currentLang === 'ar' ? 'حساب طيفي وإجهاد الجفاف' : 'Calculate & Assess Drought'}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  <input 
+                    type="checkbox" 
+                    checked={layers.ndvi} 
+                    onChange={() => toggleLayer('ndvi')} 
+                    className="rounded accent-emerald-500 cursor-pointer"
+                  />
+                </div>
               </div>
 
               {layers.ndvi && (
@@ -1664,6 +2339,92 @@ export const GISMap: React.FC<GISMapProps> = ({
               )}
             </div>
 
+            {/* Terrain Steepness Heatmap Layer Control (DEM Slope & Machinery Mobility) */}
+            <div className="p-2 rounded bg-amber-950/20 border border-amber-900/40 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                  <Mountain className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="flex flex-col">
+                    <span className="font-semibold text-amber-200">
+                      {t.layerTerrainSteepnessHeatmap || (currentLang === 'ar' ? 'الخريطة الحرارية لانحدار التضاريس' : 'Terrain Steepness Heatmap')}
+                    </span>
+                    <span className="text-[9px] text-amber-400/80 font-mono">
+                      {layers.terrainSteepnessHeatmap 
+                        ? `${regionalSteepnessData.summary.impassablePercent}% Impassable (>28°) • ${Math.round(terrainSteepnessOpacity * 100)}% Opacity` 
+                        : 'OFF'}
+                    </span>
+                  </span>
+                </label>
+                <input 
+                  type="checkbox" 
+                  id="layer-toggle-terrain-steepness"
+                  checked={layers.terrainSteepnessHeatmap} 
+                  onChange={() => toggleLayer('terrainSteepnessHeatmap')} 
+                  className="rounded accent-amber-500 cursor-pointer"
+                />
+              </div>
+
+              {layers.terrainSteepnessHeatmap && (
+                <div className="pt-1 space-y-1.5 border-t border-amber-900/30">
+                  <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded border border-slate-800 text-[9px]">
+                    <button
+                      onClick={() => setTerrainSteepnessMode('all')}
+                      className={`flex-1 py-0.5 rounded font-bold transition cursor-pointer ${
+                        terrainSteepnessMode === 'all' ? 'bg-amber-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      {currentLang === 'ar' ? 'الكل' : 'All'}
+                    </button>
+                    <button
+                      onClick={() => setTerrainSteepnessMode('critical_only')}
+                      className={`flex-1 py-0.5 rounded font-bold transition cursor-pointer ${
+                        terrainSteepnessMode === 'critical_only' ? 'bg-rose-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      {currentLang === 'ar' ? 'حرجة ≥18°' : 'Crit ≥18°'}
+                    </button>
+                    <button
+                      onClick={() => setTerrainSteepnessMode('machinery_access')}
+                      className={`flex-1 py-0.5 rounded font-bold transition cursor-pointer ${
+                        terrainSteepnessMode === 'machinery_access' ? 'bg-orange-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      {currentLang === 'ar' ? 'آليات' : 'Machinery'}
+                    </button>
+                    <button
+                      onClick={() => setTerrainSteepnessMode('ground_crew_safety')}
+                      className={`flex-1 py-0.5 rounded font-bold transition cursor-pointer ${
+                        terrainSteepnessMode === 'ground_crew_safety' ? 'bg-purple-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      {currentLang === 'ar' ? 'مشاة' : 'Crews'}
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="1.0"
+                    step="0.05"
+                    value={terrainSteepnessOpacity}
+                    onChange={(e) => setTerrainSteepnessOpacity(parseFloat(e.target.value))}
+                    className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                  />
+                  <div className="flex items-center justify-between text-[9px] text-slate-400">
+                    <span>
+                      {currentLang === 'ar' ? 'متوسط الانحدار:' : 'Mean Slope:'}{' '}
+                      <strong className="text-amber-300">{regionalSteepnessData.summary.meanSlopeDegrees}°</strong>
+                    </span>
+                    <button
+                      onClick={() => setShowSteepnessHUD(true)}
+                      className="text-amber-400 hover:text-amber-200 underline font-mono text-[9px] cursor-pointer"
+                    >
+                      {currentLang === 'ar' ? 'فتح لوحة التحليل' : 'Open HUD'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <label className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 cursor-pointer">
               <span className="flex items-center gap-2 text-slate-300">
                 <Droplets className="w-3.5 h-3.5 text-cyan-400" />
@@ -1745,6 +2506,20 @@ export const GISMap: React.FC<GISMapProps> = ({
                 checked={layers.evacuationPlanner} 
                 onChange={() => toggleLayer('evacuationPlanner')} 
                 className="rounded accent-emerald-500"
+              />
+            </label>
+
+            {/* Fire Front Dynamics Vector Layer Toggle */}
+            <label className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 cursor-pointer bg-orange-950/20 border border-orange-500/20">
+              <span className="flex items-center gap-2 text-orange-200">
+                <Flame className="w-3.5 h-3.5 text-orange-400" />
+                <span>{t.layerFireFrontDynamics || (currentLang === 'ar' ? 'ديناميكيات جبهة النيران (Fire Front Dynamics)' : 'Fire Front Dynamics (Active Edge)')}</span>
+              </span>
+              <input 
+                type="checkbox" 
+                checked={layers.fireFrontDynamics} 
+                onChange={() => toggleLayer('fireFrontDynamics')} 
+                className="rounded accent-orange-500"
               />
             </label>
 
@@ -2035,14 +2810,14 @@ export const GISMap: React.FC<GISMapProps> = ({
               className="pointer-events-none transition-opacity duration-300"
             >
               {/* Wide Dispersion Ambient Thermal Signature Blobs */}
-              {activeFirmsHotspots.map((hotspot) => {
+              {activeFirmsHotspots.map((hotspot, idx) => {
                 const pt = geoToSvg(hotspot.latitude, hotspot.longitude);
                 const frp = hotspot.frpMw || 25;
                 const rWide = Math.min(85, Math.max(34, 28 + Math.sqrt(frp) * 4.8));
 
                 return (
                   <circle
-                    key={`firms-wide-dispersion-${hotspot.id}`}
+                    key={`firms-wide-dispersion-${hotspot.id}-${idx}`}
                     cx={pt.x}
                     cy={pt.y}
                     r={rWide}
@@ -2053,14 +2828,14 @@ export const GISMap: React.FC<GISMapProps> = ({
               })}
 
               {/* Core High-Intensity Radiant Density Heatmap */}
-              {activeFirmsHotspots.map((hotspot) => {
+              {activeFirmsHotspots.map((hotspot, idx) => {
                 const pt = geoToSvg(hotspot.latitude, hotspot.longitude);
                 const frp = hotspot.frpMw || 25;
                 const rCore = Math.min(52, Math.max(20, 16 + Math.sqrt(frp) * 3.2));
                 const confFactor = Math.max(0.5, Math.min(1, hotspot.confidencePercent / 100));
 
                 return (
-                  <g key={`firms-density-cluster-${hotspot.id}`}>
+                  <g key={`firms-density-cluster-${hotspot.id}-${idx}`}>
                     {/* Concentrated Radiative Thermal Energy Bloom */}
                     <circle
                       cx={pt.x}
@@ -2129,6 +2904,35 @@ export const GISMap: React.FC<GISMapProps> = ({
                 );
               })}
             </g>
+          )}
+
+          {/* Terrain Steepness Heatmap & Machinery Mobility Hazard Layer (DEM Elevation Analysis) */}
+          {layers.terrainSteepnessHeatmap && (
+            <TerrainSteepnessOverlay
+              geoToSvg={geoToSvg}
+              cells={regionalSteepnessData.cells}
+              criticalZones={CRITICAL_ESCARPMENT_ZONES}
+              opacity={terrainSteepnessOpacity}
+              mode={terrainSteepnessMode}
+              showContourBlobs={showSteepnessBlobs}
+              showHazardBadges={showSteepnessBadges}
+              showAspectVectors={showSteepnessVectors}
+              selectedCellId={selectedSteepnessCell?.id || null}
+              onSelectCell={(cell) => {
+                setSelectedSteepnessCell(cell);
+                setSelectedCriticalEscarpment(null);
+                if (cell) setShowSteepnessHUD(true);
+              }}
+              onSelectCriticalZone={(zone) => {
+                setSelectedCriticalEscarpment(zone);
+                setSelectedSteepnessCell(null);
+                setShowSteepnessHUD(true);
+                const pt = geoToSvg(zone.coordinates.lat, zone.coordinates.lng);
+                setZoom(2.4);
+                setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+              }}
+              currentLang={currentLang}
+            />
           )}
 
           {/* Wilaya Resource Heatmap & Asset Optimization Layer */}
@@ -2407,9 +3211,24 @@ export const GISMap: React.FC<GISMapProps> = ({
                       cy={pt.y}
                       r={rSvg * 1.25}
                       fill={pixel.color}
-                      opacity={isCritical ? 0.35 : 0.20}
+                      opacity={isCritical ? 0.38 : 0.20}
                       filter="blur(6px)"
                     />
+
+                    {/* Outer Pulsing Aura for Critical Drought Stress */}
+                    {isCritical && (
+                      <circle
+                        cx={pt.x}
+                        cy={pt.y}
+                        r={rSvg * 1.45}
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="1.3"
+                        strokeDasharray="4 3"
+                        opacity={0.8}
+                        className="animate-pulse"
+                      />
+                    )}
 
                     {/* Main NDVI Raster Cell */}
                     <circle
@@ -2459,21 +3278,21 @@ export const GISMap: React.FC<GISMapProps> = ({
                   <g pointerEvents="none" className="z-30">
                     {/* Tooltip Card Box */}
                     <rect
-                      x={pt.x - 70}
-                      y={pt.y - 48}
-                      width="140"
-                      height="40"
+                      x={pt.x - 78}
+                      y={pt.y - 56}
+                      width="156"
+                      height="48"
                       rx="6"
                       fill="#020617"
                       stroke={stop.hex}
                       strokeWidth="1.2"
-                      opacity="0.95"
+                      opacity="0.96"
                       filter="drop-shadow(0 4px 6px rgba(0,0,0,0.6))"
                     />
                     {/* Forest Name */}
                     <text
                       x={pt.x}
-                      y={pt.y - 36}
+                      y={pt.y - 44}
                       fill="#f8fafc"
                       fontSize="8"
                       fontWeight="bold"
@@ -2484,7 +3303,7 @@ export const GISMap: React.FC<GISMapProps> = ({
                     {/* Values line */}
                     <text
                       x={pt.x}
-                      y={pt.y - 24}
+                      y={pt.y - 33}
                       fill={stop.hex}
                       fontSize="7.5"
                       fontFamily="monospace"
@@ -2493,16 +3312,27 @@ export const GISMap: React.FC<GISMapProps> = ({
                     >
                       NDVI {hoveredNdviPixel.ndvi} • FMC {hoveredNdviPixel.fuelMoistureFmc}%
                     </text>
-                    {/* Flammability Status */}
+                    {/* Spectral Bands Readout */}
                     <text
                       x={pt.x}
-                      y={pt.y - 13}
+                      y={pt.y - 22}
+                      fill="#94a3b8"
+                      fontSize="6.5"
+                      fontFamily="monospace"
+                      textAnchor="middle"
+                    >
+                      B8(NIR): {hoveredNdviPixel.nirReflectance ?? '0.38'} • B4(Red): {hoveredNdviPixel.redReflectance ?? '0.14'}
+                    </text>
+                    {/* Flammability Status & Anomaly */}
+                    <text
+                      x={pt.x}
+                      y={pt.y - 12}
                       fill="#cbd5e1"
                       fontSize="6.5"
                       fontWeight="500"
                       textAnchor="middle"
                     >
-                      {riskLabel}
+                      {riskLabel} {hoveredNdviPixel.droughtAnomalyPercent !== undefined ? `• ${hoveredNdviPixel.droughtAnomalyPercent > 0 ? '+' : ''}${hoveredNdviPixel.droughtAnomalyPercent}% Δ` : ''}
                     </text>
                   </g>
                 );
@@ -2954,13 +3784,13 @@ export const GISMap: React.FC<GISMapProps> = ({
           {/* NASA FIRMS Live Satellite Detections Layer (VIIRS 375m & MODIS) */}
           {layers.nasaFirms && (
             <g id="layer-nasa-firms-satellite">
-              {activeFirmsHotspots.map((hotspot) => {
+              {activeFirmsHotspots.map((hotspot, idx) => {
                 const pt = geoToSvg(hotspot.latitude, hotspot.longitude);
                 const isSelected = selectedFirmsHotspot?.id === hotspot.id || selectedIncident?.id === `SAT-FIRMS-${hotspot.id}`;
 
                 return (
                   <g
-                    key={`firms-${hotspot.id}`}
+                    key={`firms-${hotspot.id}-${idx}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedFirmsHotspot(hotspot);
@@ -3583,17 +4413,31 @@ export const GISMap: React.FC<GISMapProps> = ({
             />
           )}
 
+          {/* 14b. Fire Front Dynamics Vector Layer (Active Expansion Edge Polyline & Historical Wind/Terrain Trails) */}
+          {layers.fireFrontDynamics && fireFrontDynamicsResult && (
+            <FireFrontDynamicsLayer
+              dynamics={fireFrontDynamicsResult}
+              geoToSvg={geoToSvg}
+              showActiveFront={true}
+              showHistoricalTrails={showDynamicsHistoricalTrails}
+              showExpansionVectors={showDynamicsVectors}
+              showVertexNodes={showDynamicsVertexNodes}
+              selectedVertexId={selectedDynamicsVertex?.id || null}
+              onSelectVertex={setSelectedDynamicsVertex}
+              currentLang={currentLang}
+            />
+          )}
+
           {/* 15. Smart Evacuation Routing & Road Network Layer */}
           {layers.evacuationPlanner && evacuationPlan && (
             <EvacuationRoutesLayer
               geoToSvg={geoToSvg}
               routes={evacuationPlan.settlementRoutes}
-              selectedRouteId={selectedEvacRoute?.id || null}
+              selectedRouteId={activeEvacRoute?.id || null}
               onSelectRoute={setSelectedEvacRoute}
               selectedSettlementId={selectedEvacSettlement.id}
               onSelectSettlement={(s) => {
-                setSelectedEvacSettlement(s);
-                setSelectedEvacRoute(null);
+                handleGenerateOrRecalculateRoute(s);
               }}
               fireCenter={evacuationPlan.activeFireCenter}
               smokePlumeCone={evacuationPlan.smokePlumeCone}
@@ -3601,6 +4445,10 @@ export const GISMap: React.FC<GISMapProps> = ({
               showSmokeCone={showEvacSmokeCone}
               showShelters={showEvacShelters}
               currentLang={currentLang}
+              isTemporaryDynamicActive={isTemporaryDynamicActive}
+              temporaryCountdownSeconds={temporaryCountdownSeconds}
+              onExtendTemporary={handleExtendTemporary}
+              onPinPermanent={handlePinPermanent}
             />
           )}
         </g>
@@ -4094,13 +4942,27 @@ export const GISMap: React.FC<GISMapProps> = ({
             </div>
           </>
         )}
+
+        {layers.terrainSteepnessHeatmap && (
+          <>
+            <div className="h-3 w-px bg-slate-800" />
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded bg-amber-950 border border-amber-400 flex items-center justify-center">
+                <Mountain className="w-2.5 h-2.5 text-amber-400" />
+              </span>
+              <span className="text-amber-300 font-medium font-mono text-[10px]">
+                {currentLang === 'ar' ? 'انحدار التضاريس DEM' : 'DEM Steepness'} (Max {regionalSteepnessData.summary.maxSlopeDegrees}°)
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Floating Tactical Fire Spread Projection HUD Panel */}
       {layers.spreadIsochrones && showProjectionHUD && activeHUDProjection && (
         <div 
           id="fire-spread-projection-hud"
-          className="absolute bottom-6 left-4 z-30 w-96 max-w-[calc(100vw-2rem)] bg-slate-950/95 backdrop-blur-2xl border border-amber-500/50 rounded-2xl p-3.5 shadow-2xl text-xs space-y-3 animate-in fade-in slide-in-from-bottom-3"
+          className="absolute inset-x-2 sm:inset-x-auto sm:start-4 bottom-2 sm:bottom-6 z-30 w-auto sm:w-96 max-h-[75vh] overflow-y-auto bg-slate-950/95 backdrop-blur-2xl border border-amber-500/50 rounded-2xl p-3.5 shadow-2xl text-xs space-y-3 animate-in fade-in slide-in-from-bottom-3"
         >
           {/* Header with Title & Incident Select */}
           <div className="flex items-center justify-between border-b border-amber-900/40 pb-2.5">
@@ -4330,18 +5192,21 @@ export const GISMap: React.FC<GISMapProps> = ({
       {/* Interactive Sentinel-2 NDVI & Biomass Legend HUD */}
       {layers.ndvi && (
         <InteractiveNdviLegend
-          forests={forests}
+          forests={dynamicNdviResult.updatedForests}
           currentLang={currentLang}
           opacity={ndviOpacity}
           onOpacityChange={setNdviOpacity}
           activeFilter={ndviFilter}
           onFilterChange={setNdviFilter}
           onSelectForest={onSelectForest}
+          onOpenCalculationPanel={() => setShowNdviControl(true)}
+          appliedScenarioLabel={appliedScenarioLabel}
+          onClose={() => toggleLayer('ndvi')}
         />
       )}
 
       {/* Wilaya Resource Optimization & Heatmap Tactical HUD */}
-      {layers.resourceHeatmap && (
+      {layers.resourceHeatmap && showResourceHUD && (
         <ResourceOptimizationHUD
           balances={displayedWilayaBalances}
           summary={nationalResourceSummary}
@@ -4362,15 +5227,21 @@ export const GISMap: React.FC<GISMapProps> = ({
           onExecuteRecommendation={handleExecuteRecommendation}
           activeFilter={resourceFilter}
           onFilterChange={setResourceFilter}
+          onClose={() => setShowResourceHUD(false)}
         />
       )}
 
       {/* Floating Tactical Alert Banner for Real-Time Evacuation Instructions & Urgency */}
-      {layers.evacuationPlanner && activeEvacRoute && (
+      {layers.evacuationPlanner && activeEvacRoute && showAlertBanner && (
         <AlertBanner
           route={activeEvacRoute}
           settlement={selectedEvacSettlement}
           currentLang={currentLang}
+          generationKey={evacGenerationTriggerKey}
+          isTemporaryActive={isTemporaryDynamicActive}
+          temporaryCountdownSeconds={temporaryCountdownSeconds}
+          onExtendTemporary={handleExtendTemporary}
+          onPinPermanent={handlePinPermanent}
           onOpenEvacHUD={() => setShowEvacHUD(true)}
           onCenterMapOnRoute={() => {
             if (activeEvacRoute.waypoints && activeEvacRoute.waypoints.length > 0) {
@@ -4381,6 +5252,7 @@ export const GISMap: React.FC<GISMapProps> = ({
               setPan({ x: 500 - pt.x * 2.2, y: 325 - pt.y * 2.2 });
             }
           }}
+          onDismiss={() => setShowAlertBanner(false)}
         />
       )}
 
@@ -4390,16 +5262,19 @@ export const GISMap: React.FC<GISMapProps> = ({
           plan={evacuationPlan}
           selectedSettlement={selectedEvacSettlement}
           onSelectSettlement={(s) => {
-            setSelectedEvacSettlement(s);
-            setSelectedEvacRoute(null);
+            handleGenerateOrRecalculateRoute(s);
             const pt = geoToSvg(s.coordinates.lat, s.coordinates.lng);
             setZoom(2.0);
             setPan({ x: 500 - pt.x * 2.0, y: 325 - pt.y * 2.0 });
           }}
-          selectedRoute={selectedEvacRoute}
+          selectedRoute={activeEvacRoute}
           onSelectRoute={(r) => {
             setSelectedEvacRoute(r);
             if (r) {
+              setIsTemporaryDynamicActive(true);
+              setTemporaryCountdownSeconds(45);
+              setShowAlertBanner(true);
+              setEvacGenerationTriggerKey(Date.now());
               const pt = geoToSvg(r.safeZone.coordinates.lat, r.safeZone.coordinates.lng);
               setZoom(2.2);
               setPan({ x: 500 - pt.x * 2.2, y: 325 - pt.y * 2.2 });
@@ -4412,6 +5287,36 @@ export const GISMap: React.FC<GISMapProps> = ({
           showShelters={showEvacShelters}
           onToggleShelters={() => setShowEvacShelters(!showEvacShelters)}
           onClose={() => setShowEvacHUD(false)}
+          currentLang={currentLang}
+        />
+      )}
+
+      {/* Fire Front Dynamics Tactical HUD (Active Expansion Edge & Periodic Vector Updates) */}
+      {layers.fireFrontDynamics && showFireFrontDynamicsHUD && fireFrontDynamicsResult && (
+        <FireFrontDynamicsHUD
+          dynamics={fireFrontDynamicsResult}
+          isPeriodicActive={isDynamicsPeriodicActive}
+          onTogglePeriodic={() => setIsDynamicsPeriodicActive(!isDynamicsPeriodicActive)}
+          onStepForward={handleDynamicsStepForward}
+          onResetSimulation={handleResetDynamics}
+          periodicIntervalSeconds={dynamicsPeriodicIntervalSeconds}
+          onChangeIntervalSeconds={setDynamicsPeriodicIntervalSeconds}
+          showVectors={showDynamicsVectors}
+          onToggleVectors={() => setShowDynamicsVectors(!showDynamicsVectors)}
+          showHistoricalTrails={showDynamicsHistoricalTrails}
+          onToggleHistoricalTrails={() => setShowDynamicsHistoricalTrails(!showDynamicsHistoricalTrails)}
+          showVertexNodes={showDynamicsVertexNodes}
+          onToggleVertexNodes={() => setShowDynamicsVertexNodes(!showDynamicsVertexNodes)}
+          selectedVertex={selectedDynamicsVertex}
+          onSelectVertex={(v) => {
+            setSelectedDynamicsVertex(v);
+            if (v) {
+              const pt = geoToSvg(v.lat, v.lng);
+              setZoom(2.4);
+              setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+            }
+          }}
+          onClose={() => setShowFireFrontDynamicsHUD(false)}
           currentLang={currentLang}
         />
       )}
@@ -4461,6 +5366,34 @@ export const GISMap: React.FC<GISMapProps> = ({
             setZoom(2.4);
             setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
           }}
+        />
+      )}
+
+      {/* Terrain Steepness & Machinery Mobility Tactical HUD (DEM Analysis) */}
+      {layers.terrainSteepnessHeatmap && showSteepnessHUD && (
+        <TerrainSteepnessHUD
+          summary={regionalSteepnessData.summary}
+          selectedCell={selectedSteepnessCell}
+          selectedCriticalZone={selectedCriticalEscarpment}
+          mode={terrainSteepnessMode}
+          onChangeMode={setTerrainSteepnessMode}
+          opacity={terrainSteepnessOpacity}
+          onChangeOpacity={setTerrainSteepnessOpacity}
+          showContourBlobs={showSteepnessBlobs}
+          onToggleContourBlobs={() => setShowSteepnessBlobs(!showSteepnessBlobs)}
+          showAspectVectors={showSteepnessVectors}
+          onToggleAspectVectors={() => setShowSteepnessVectors(!showSteepnessVectors)}
+          showHazardBadges={showSteepnessBadges}
+          onToggleHazardBadges={() => setShowSteepnessBadges(!showSteepnessBadges)}
+          onSelectCriticalZone={(zone) => {
+            setSelectedCriticalEscarpment(zone);
+            setSelectedSteepnessCell(null);
+            const pt = geoToSvg(zone.coordinates.lat, zone.coordinates.lng);
+            setZoom(2.4);
+            setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+          }}
+          onClose={() => setShowSteepnessHUD(false)}
+          currentLang={currentLang}
         />
       )}
 

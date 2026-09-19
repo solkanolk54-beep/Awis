@@ -69,11 +69,13 @@ export const PostFireReportModal: React.FC<PostFireReportModalProps> = ({
   return (
     <div 
       id="post-fire-report-modal-backdrop" 
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto cursor-pointer"
     >
       <div 
         id="post-fire-report-dossier" 
-        className="relative w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] cursor-default"
       >
         {/* =========================================================================
             1. PRINT-ONLY OFFICIAL GOVERNMENT LETTERHEAD & LEGAL ARCHIVE BANNER

@@ -11,7 +11,8 @@ import {
   Sparkles,
   Info,
   Flame,
-  Filter
+  Filter,
+  Activity
 } from 'lucide-react';
 import { ForestZone, Language } from '../../types';
 import { translations } from '../../i18n/translations';
@@ -29,6 +30,9 @@ interface InteractiveNdviLegendProps {
   activeFilter: 'all' | 'critical_drought' | 'moisture_stressed' | 'moderate' | 'healthy_dense';
   onFilterChange: (filter: 'all' | 'critical_drought' | 'moisture_stressed' | 'moderate' | 'healthy_dense') => void;
   onSelectForest?: (forest: ForestZone) => void;
+  onOpenCalculationPanel?: () => void;
+  appliedScenarioLabel?: string;
+  onClose?: () => void;
 }
 
 export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
@@ -38,10 +42,13 @@ export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
   onOpacityChange,
   activeFilter,
   onFilterChange,
-  onSelectForest
+  onSelectForest,
+  onOpenCalculationPanel,
+  appliedScenarioLabel,
+  onClose
 }) => {
   const t = translations[currentLang];
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
   const [showExplanation, setShowExplanation] = useState<boolean>(false);
 
   const summary = computeNationalNdviSummary(forests);
@@ -49,7 +56,7 @@ export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
   return (
     <div 
       id="interactive-ndvi-legend-hud" 
-      className="absolute bottom-16 sm:bottom-20 start-3 sm:start-4 z-20 max-w-sm w-full bg-slate-950/92 backdrop-blur-md border border-emerald-500/40 rounded-xl shadow-2xl overflow-hidden text-xs text-slate-200 transition-all duration-200 font-sans"
+      className="absolute inset-x-2 sm:inset-x-auto bottom-14 sm:bottom-16 start-2 sm:start-4 z-20 w-auto sm:max-w-sm max-h-[70vh] overflow-y-auto bg-slate-950/92 backdrop-blur-md border border-emerald-500/40 rounded-xl shadow-2xl text-xs text-slate-200 transition-all duration-200 font-sans"
     >
       {/* Header Bar */}
       <div 
@@ -85,6 +92,20 @@ export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          {onOpenCalculationPanel && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenCalculationPanel();
+              }}
+              className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 rounded flex items-center gap-1 transition"
+              title={currentLang === 'ar' ? 'حساب طيفي وإجهاد الجفاف' : 'Calculate & Assess Drought'}
+            >
+              <Activity className="w-3 h-3 text-emerald-400" />
+              <span className="hidden sm:inline">{currentLang === 'ar' ? 'الحساب الطيفي' : 'Calculate'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={(e) => {
@@ -96,12 +117,27 @@ export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
           >
             <Info className="w-3.5 h-3.5" />
           </button>
-          <button 
-            type="button"
-            className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition"
-          >
-            {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-          </button>
+          <span className="text-[10px] text-emerald-400 font-mono font-bold hidden sm:inline">
+            {isExpanded ? (currentLang === 'ar' ? 'طي' : 'Collapse') : (currentLang === 'ar' ? 'توسيع' : 'Expand')}
+          </span>
+          {isExpanded ? (
+            <ChevronUp className="w-4 h-4 text-slate-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400" />
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition ml-1"
+              title="Close"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -224,6 +260,16 @@ export const InteractiveNdviLegend: React.FC<InteractiveNdviLegendProps> = ({
               </span>
             </div>
           </div>
+
+          {appliedScenarioLabel && (
+            <div className="flex items-center justify-between text-[10px] px-2 py-1 rounded bg-emerald-950/40 border border-emerald-800/40 text-emerald-300">
+              <span className="flex items-center gap-1 text-slate-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {currentLang === 'ar' ? 'السيناريو المحسوب:' : 'Scenario:'}
+              </span>
+              <span className="font-semibold text-emerald-200 truncate max-w-[170px]">{appliedScenarioLabel}</span>
+            </div>
+          )}
 
           {/* Layer Opacity Slider */}
           <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between gap-3 text-[10px] text-slate-400">

@@ -42,6 +42,7 @@ interface ResourceOptimizationHUDProps {
   onExecuteRecommendation?: (rec: InterWilayaRecommendation) => void;
   activeFilter: 'all' | 'deficit_only' | 'surplus_only';
   onFilterChange: (filter: 'all' | 'deficit_only' | 'surplus_only') => void;
+  onClose?: () => void;
 }
 
 export const ResourceOptimizationHUD: React.FC<ResourceOptimizationHUDProps> = ({
@@ -56,7 +57,8 @@ export const ResourceOptimizationHUD: React.FC<ResourceOptimizationHUDProps> = (
   onSelectWilaya,
   onExecuteRecommendation,
   activeFilter,
-  onFilterChange
+  onFilterChange,
+  onClose
 }) => {
   const t = translations[currentLang];
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
@@ -74,7 +76,7 @@ export const ResourceOptimizationHUD: React.FC<ResourceOptimizationHUDProps> = (
     <>
       {/* Floating Tactical Commander Control Dock (Top Left, beneath Header) */}
       <div 
-        className={`absolute top-16 ${isRtl ? 'right-4' : 'left-4'} z-20 w-80 md:w-96 bg-slate-950/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl transition-all duration-300 overflow-hidden select-none text-slate-100 text-xs font-sans`}
+        className={`absolute inset-x-2 sm:inset-x-auto ${isRtl ? 'sm:right-4' : 'sm:left-4'} top-14 sm:top-16 z-20 w-auto sm:w-88 md:w-96 max-h-[75vh] overflow-y-auto bg-slate-950/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl transition-all duration-300 select-none text-slate-100 text-xs font-sans`}
       >
         {/* Dock Header */}
         <div className="p-3 bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border-b border-slate-800 flex items-center justify-between">
@@ -101,6 +103,15 @@ export const ResourceOptimizationHUD: React.FC<ResourceOptimizationHUDProps> = (
             >
               {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                title={currentLang === 'ar' ? 'إغلاق اللوحة' : 'Close HUD'}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 

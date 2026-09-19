@@ -90,6 +90,9 @@ export interface NdviRasterPixel {
   forestNameAr: string;
   forestName: string;
   fuelMoistureFmc: number;
+  nirReflectance?: number;
+  redReflectance?: number;
+  droughtAnomalyPercent?: number;
 }
 
 /**
@@ -202,3 +205,244 @@ export function computeNationalNdviSummary(forests: ForestZone[]): NationalNdviS
     averageCanopyMoisture
   };
 }
+
+export type DroughtScenarioKey = 'scirocco_heatwave' | 'late_summer' | 'baseline' | 'autumn_recovery' | 'spring_greenup' | 'custom';
+
+export interface DroughtScenarioPreset {
+  key: DroughtScenarioKey;
+  labelEn: string;
+  labelAr: string;
+  labelFr: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  stressFactor: number; // -0.40 to +0.30
+  nirMultiplier: number;
+  redMultiplier: number;
+}
+
+export const DROUGHT_SCENARIO_PRESETS: DroughtScenarioPreset[] = [
+  {
+    key: 'scirocco_heatwave',
+    labelEn: 'Scirocco Heatwave (Severe Aridity)',
+    labelAr: 'موجة حر سيروكو (جفاف وتجفيف حاد)',
+    labelFr: 'Canicule Sirocco (Sécheresse Extrême)',
+    descriptionEn: 'Extreme southern dry desert winds; rapid leaf desiccation and extreme flammability',
+    descriptionAr: 'رياح جنوبية لاهبة تسبب جفافاً سريعاً للأوراق ومحتوى رطوبي حرج',
+    stressFactor: -0.18,
+    nirMultiplier: 0.82,
+    redMultiplier: 1.25
+  },
+  {
+    key: 'late_summer',
+    labelEn: 'Late Summer Dry Season',
+    labelAr: 'ذروة الجفاف الصيفي المتأخر',
+    labelFr: 'Pointe Estivale Sèche',
+    descriptionEn: 'Cumulative seasonal water deficit; high ignition and ember spotting vulnerability',
+    descriptionAr: 'عجز مائي تراكمي يرفع من حساسية الغابات للشرارات والنيران السريعة',
+    stressFactor: -0.09,
+    nirMultiplier: 0.91,
+    redMultiplier: 1.12
+  },
+  {
+    key: 'baseline',
+    labelEn: '10-Yr Seasonal Baseline',
+    labelAr: 'المعدل الفصلي المرجعي (10 سنوات)',
+    labelFr: 'Référence Saisonnière Décennale',
+    descriptionEn: 'Nominal Copernicus Sentinel-2 MSI Multi-Spectral calibration baseline',
+    descriptionAr: 'المعدل الطبيعي للمعايرة الطيفية متعددة النطاقات لساتل سنتينل-2',
+    stressFactor: 0.0,
+    nirMultiplier: 1.0,
+    redMultiplier: 1.0
+  },
+  {
+    key: 'autumn_recovery',
+    labelEn: 'Early Autumn Moisture Inflow',
+    labelAr: 'انفراج خريفي رطب بعد الأمطار',
+    labelFr: 'Réveil Automnal & Pluies',
+    descriptionEn: 'Partial moisture replenishment; lowered fine fuel flammability in northern massifs',
+    descriptionAr: 'تحسن طفيف في رطوبة الأوراق وانخفاض سرعة الاشتعال بالكتل الساحلية',
+    stressFactor: +0.07,
+    nirMultiplier: 1.08,
+    redMultiplier: 0.94
+  },
+  {
+    key: 'spring_greenup',
+    labelEn: 'Spring Canopy Greenup',
+    labelAr: 'نمو الربيع الخضري الكثيف',
+    labelFr: 'Plein Rebond Printanier',
+    descriptionEn: 'Active photosynthetic vigor and peak canopy moisture content (> 35% FMC)',
+    descriptionAr: 'نشاط تمثيل ضوئي عالٍ ورطوبة أوراق قصوى تحد من انتشار الحرائق',
+    stressFactor: +0.16,
+    nirMultiplier: 1.18,
+    redMultiplier: 0.85
+  }
+];
+
+export interface NdviCalculationParams {
+  droughtStressFactor: number; // -0.40 to +0.30
+  scenarioKey: DroughtScenarioKey;
+  sensorNirScale?: number; // default 1.0
+  sensorRedScale?: number; // default 1.0
+}
+
+export interface DynamicForestAssessment {
+  forestId: string;
+  forestName: string;
+  forestNameAr: string;
+  baseNdvi: number;
+  calculatedNdvi: number;
+  nirReflectance: number;
+  redReflectance: number;
+  canopyMoistureFmc: number;
+  anomalyPercent: number;
+  stressCategory: 'critical_drought' | 'moisture_stressed' | 'moderate' | 'healthy_dense';
+  colorStop: NdviColorStop;
+  flammabilityIndex: 'Extreme' | 'High' | 'Moderate' | 'Low';
+  flammabilityIndexAr: string;
+  totalHectares: number;
+}
+
+export interface DynamicNdviCalculationResult {
+  pixels: NdviRasterPixel[];
+  assessments: Record<string, DynamicForestAssessment>;
+  updatedForests: ForestZone[];
+  nationalSummary: NationalNdviSummary;
+  calculatedAt: string;
+  appliedParams: NdviCalculationParams;
+}
+
+/**
+ * Dynamically computes Sentinel-2 MSI Multi-Spectral NDVI and Drought Stress levels
+ * across Algerian forest massifs based on user-driven climatic scenarios and drought sliders.
+ */
+export function calculateDynamicForestNdvi(
+  forests: ForestZone[],
+  params: NdviCalculationParams
+): DynamicNdviCalculationResult {
+  const pixels: NdviRasterPixel[] = [];
+  const assessments: Record<string, DynamicForestAssessment> = {};
+  const updatedForests: ForestZone[] = [];
+
+  const nirScale = params.sensorNirScale ?? 1.0;
+  const redScale = params.sensorRedScale ?? 1.0;
+  const stress = Math.max(-0.40, Math.min(0.35, params.droughtStressFactor));
+
+  forests.forEach((forest) => {
+    const baseNdvi = forest.ndviValue ?? 0.35;
+    const baseLat = forest.coordinates.lat;
+    const baseLng = forest.coordinates.lng;
+
+    // Calculate dynamic NDVI with realistic clamping
+    const calculatedNdvi = Number(Math.max(0.08, Math.min(0.85, baseNdvi + stress)).toFixed(2));
+
+    // Derive realistic Sentinel-2 MSI reflectance values (NIR B8 842nm and Red B4 665nm)
+    // In physical vegetation reflectance, (NIR - Red)/(NIR + Red) = NDVI
+    // Total surface reflectance (NIR + Red) ~ 0.46 for typical Mediterranean maquis/pines
+    const totalReflectance = 0.46;
+    const rawNir = ((totalReflectance * (1 + calculatedNdvi)) / 2) * nirScale;
+    const rawRed = ((totalReflectance * (1 - calculatedNdvi)) / 2) * redScale;
+    const nirReflectance = Number(Math.max(0.10, Math.min(0.85, rawNir)).toFixed(3));
+    const redReflectance = Number(Math.max(0.02, Math.min(0.40, rawRed)).toFixed(3));
+
+    // Dynamic Fuel Moisture Content (FMC %)
+    const baseFmc = forest.canopyMoisturePercent ?? 18;
+    const calculatedFmc = Number(Math.max(6, Math.min(50, baseFmc + (stress * 65))).toFixed(1));
+
+    // Dynamic 10-year seasonal anomaly %
+    const deltaPercent = Math.round(((calculatedNdvi - baseNdvi) / Math.max(0.15, baseNdvi)) * 100);
+    const calculatedAnomaly = (forest.ndviAnomalyPercent ?? -15) + deltaPercent;
+
+    const colorStop = getNdviColorStop(calculatedNdvi);
+
+    const assessment: DynamicForestAssessment = {
+      forestId: forest.id,
+      forestName: forest.name,
+      forestNameAr: forest.nameAr,
+      baseNdvi,
+      calculatedNdvi,
+      nirReflectance,
+      redReflectance,
+      canopyMoistureFmc: calculatedFmc,
+      anomalyPercent: calculatedAnomaly,
+      stressCategory: colorStop.statusCategory,
+      colorStop,
+      flammabilityIndex: colorStop.flammabilityIndex,
+      flammabilityIndexAr: colorStop.flammabilityIndexAr,
+      totalHectares: forest.totalHectares
+    };
+
+    assessments[forest.id] = assessment;
+
+    // Build updated forest zone with dynamic parameters
+    updatedForests.push({
+      ...forest,
+      ndviValue: calculatedNdvi,
+      ndviAnomalyPercent: calculatedAnomaly,
+      vegetationHealthCategory: colorStop.statusCategory,
+      canopyMoisturePercent: calculatedFmc
+    });
+
+    // Center pixel
+    pixels.push({
+      id: `px-${forest.id}-center`,
+      lat: baseLat,
+      lng: baseLng,
+      ndvi: calculatedNdvi,
+      color: colorStop.hex,
+      fillRgba: colorStop.fillRgba,
+      stressCategory: colorStop.statusCategory,
+      radiusKm: 14,
+      forestNameAr: forest.nameAr,
+      forestName: forest.name,
+      fuelMoistureFmc: calculatedFmc,
+      nirReflectance,
+      redReflectance,
+      droughtAnomalyPercent: calculatedAnomaly
+    });
+
+    // Radial microclimate slope offsets
+    const offsets = [
+      { dLat: 0.08, dLng: 0.06, ndviDelta: -0.04, radius: 10 }, // ridge top (drier)
+      { dLat: -0.07, dLng: 0.08, ndviDelta: +0.06, radius: 11 }, // valley / riverbed (moister)
+      { dLat: 0.06, dLng: -0.08, ndviDelta: -0.03, radius: 9 },  // south-facing exposed slope (drier)
+      { dLat: -0.08, dLng: -0.05, ndviDelta: +0.04, radius: 10 }  // shaded north slope (greener)
+    ];
+
+    offsets.forEach((off, idx) => {
+      const subNdvi = Number(Math.max(0.08, Math.min(0.85, calculatedNdvi + off.ndviDelta)).toFixed(2));
+      const stop = getNdviColorStop(subNdvi);
+      const subFmc = Number(Math.max(6, Math.min(50, calculatedFmc + (off.ndviDelta * 70))).toFixed(1));
+      const subNir = Number(Math.max(0.08, Math.min(0.85, (totalReflectance * (1 + subNdvi)) / 2)).toFixed(3));
+      const subRed = Number(Math.max(0.02, Math.min(0.40, (totalReflectance * (1 - subNdvi)) / 2)).toFixed(3));
+
+      pixels.push({
+        id: `px-${forest.id}-sub-${idx}`,
+        lat: baseLat + off.dLat,
+        lng: baseLng + off.dLng,
+        ndvi: subNdvi,
+        color: stop.hex,
+        fillRgba: stop.fillRgba,
+        stressCategory: stop.statusCategory,
+        radiusKm: off.radius,
+        forestNameAr: forest.nameAr,
+        forestName: forest.name,
+        fuelMoistureFmc: subFmc,
+        nirReflectance: subNir,
+        redReflectance: subRed,
+        droughtAnomalyPercent: calculatedAnomaly
+      });
+    });
+  });
+
+  const nationalSummary = computeNationalNdviSummary(updatedForests);
+
+  return {
+    pixels,
+    assessments,
+    updatedForests,
+    nationalSummary,
+    calculatedAt: new Date().toLocaleTimeString(),
+    appliedParams: params
+  };
+}
+

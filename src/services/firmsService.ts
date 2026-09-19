@@ -666,7 +666,7 @@ function parseFirmsCsv(
     const scanMeters = instrument === 'MODIS' ? 1000 : 375;
 
     results.push({
-      id: `VIIRS-LIVE-${i}-${Date.now().toString().slice(-4)}`,
+      id: `VIIRS-LIVE-${i}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       latitude: lat,
       longitude: lng,
       brightnessTempKelvin: bright,

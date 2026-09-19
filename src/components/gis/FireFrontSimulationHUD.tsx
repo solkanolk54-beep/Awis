@@ -129,8 +129,8 @@ export const FireFrontSimulationHUD: React.FC<FireFrontSimulationHUDProps> = ({
 
   return (
     <div 
-      className={`absolute bottom-6 right-6 z-30 flex flex-col bg-slate-900/95 backdrop-blur-md border border-red-500/40 rounded-xl shadow-2xl transition-all duration-200 text-white ${
-        isMinimized ? 'w-80 h-14 overflow-hidden' : 'w-[440px] max-h-[85vh] overflow-y-auto'
+      className={`absolute inset-x-2 sm:inset-x-auto sm:end-6 bottom-2 sm:bottom-6 z-30 flex flex-col bg-slate-900/95 backdrop-blur-md border border-red-500/40 rounded-xl shadow-2xl transition-all duration-200 text-white ${
+        isMinimized ? 'w-auto sm:w-80 h-14 overflow-hidden' : 'w-auto sm:w-[440px] max-h-[70vh] sm:max-h-[85vh] overflow-y-auto'
       }`}
       dir={isRtl ? 'rtl' : 'ltr'}
       style={{

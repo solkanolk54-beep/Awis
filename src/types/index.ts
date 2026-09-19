@@ -1,5 +1,39 @@
 export type Language = 'ar' | 'fr' | 'en';
 
+export type RBACRole = 'Citizen' | 'FieldUnit' | 'CentralCommand';
+
+export interface RBACPermissions {
+  canDispatchResources: boolean;
+  canConfirmRejectIncidents: boolean;
+  canEditIncidentStatus: boolean;
+  canAccessDroneRecon: boolean;
+  canAccessFieldOps: boolean;
+  canTriggerSimulations: boolean;
+  canAccessAnalytics: boolean;
+  canAccessPostFireReports: boolean;
+  canSubmitCitizenReport: boolean;
+  canAccessBurnRateModeling: boolean;
+  canAccessSatelliteUplink: boolean;
+  canDeclareNationalEmergency: boolean;
+}
+
+export interface UserProfile {
+  id: string;
+  uid: string;
+  email?: string | null;
+  displayName: string;
+  photoURL?: string | null;
+  role: RBACRole;
+  fineRole?: UserRole;
+  wilaya?: string;
+  badgeNumber?: string;
+  unitName?: string;
+  clearanceLevel: 1 | 2 | 3; // 1: Citizen, 2: FieldUnit, 3: CentralCommand
+  isAnonymous?: boolean;
+  lastLoginAt?: string;
+  updatedAt?: string;
+}
+
 export type UserRole = 
   | 'super_admin'
   | 'national_command'
@@ -107,6 +141,7 @@ export interface EmergencyResource {
   wilaya: string;
   capacity?: string;
   estimatedArrivalMinutes?: number;
+  assignedIncidentId?: string;
 }
 
 export interface IncidentTimelineEvent {

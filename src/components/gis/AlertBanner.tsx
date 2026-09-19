@@ -22,6 +22,11 @@ interface AlertBannerProps {
   route: CalculatedEvacuationRoute | null;
   settlement: CivilianSettlement;
   currentLang: Language;
+  generationKey?: number | string;
+  isTemporaryActive?: boolean;
+  temporaryCountdownSeconds?: number;
+  onExtendTemporary?: () => void;
+  onPinPermanent?: () => void;
   onOpenEvacHUD?: () => void;
   onCenterMapOnRoute?: () => void;
   onDismiss?: () => void;
@@ -31,6 +36,11 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({
   route,
   settlement,
   currentLang,
+  generationKey,
+  isTemporaryActive = false,
+  temporaryCountdownSeconds,
+  onExtendTemporary,
+  onPinPermanent,
   onOpenEvacHUD,
   onCenterMapOnRoute,
   onDismiss
@@ -49,17 +59,17 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({
     ? { en: 'CRITICAL EVACUATION ORDER', ar: 'أمر إخلاء استعجالي حرج', fr: 'ORDRE D’ÉVACUATION CRITIQUE', level: 'critical' }
     : isCaution
     ? { en: 'URGENT EVACUATION ADVISORY', ar: 'تنبيه إخلاء استعجالي', fr: 'AVIS D’ÉVACUATION URGENT', level: 'warning' }
-    : { en: 'ACTIVE SAFE CORRIDOR READY', ar: 'المسار الآمن مفعل وجاهز', fr: 'CORRIDOR SÉCURISÉ ACTIF', level: 'safe' };
+    : { en: 'GRAPH-OPTIMIZED ROUTE READY', ar: 'مسار إخلاء مثالي مفعل', fr: 'ITINÉRAIRE SÉCURISÉ ACTIF', level: 'safe' };
 
-  // Trigger flashing beacon when a new route is selected/calculated
+  // Trigger flashing beacon when a new route is generated/selected
   useEffect(() => {
     setIsFlashing(true);
     setDismissed(false);
     const timer = setTimeout(() => {
       setIsFlashing(false);
-    }, 6000);
+    }, 7000);
     return () => clearTimeout(timer);
-  }, [route?.id, settlement.id]);
+  }, [route?.id, settlement.id, generationKey]);
 
   // Audio beacon synth tone when critical and audio enabled
   useEffect(() => {
@@ -199,6 +209,37 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({
 
         {/* Center / Stats Pill */}
         <div className="hidden sm:flex items-center gap-3 shrink-0 px-3 py-1.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] font-mono text-slate-300">
+          {/* Temporary Dynamic Path countdown indicator */}
+          {isTemporaryActive && temporaryCountdownSeconds !== undefined && (
+            <>
+              <div className="flex items-center gap-1 text-amber-300 bg-amber-950/70 border border-amber-500/40 px-2 py-0.5 rounded-md animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span className="font-bold">
+                  {currentLang === 'ar' ? 'مسار مؤقت ديناميكي:' : 'DYNAMIC PATH:'} {temporaryCountdownSeconds}s
+                </span>
+                {onExtendTemporary && (
+                  <button
+                    onClick={onExtendTemporary}
+                    className="ml-1 text-[9px] px-1 py-0.2 bg-amber-800/80 hover:bg-amber-700 text-white rounded cursor-pointer transition font-bold"
+                    title="Extend dynamic corridor (+30s)"
+                  >
+                    +30s
+                  </button>
+                )}
+                {onPinPermanent && (
+                  <button
+                    onClick={onPinPermanent}
+                    className="text-[9px] px-1 py-0.2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded cursor-pointer transition"
+                    title="Pin route as permanent corridor"
+                  >
+                    {currentLang === 'ar' ? 'تثبيت' : 'Pin'}
+                  </button>
+                )}
+              </div>
+              <div className="w-px h-3 bg-slate-700" />
+            </>
+          )}
+
           <div className="flex items-center gap-1">
             <Clock className="w-3.5 h-3.5 text-emerald-400" />
             <span>

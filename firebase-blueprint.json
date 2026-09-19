@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "Incident": {
+      "title": "Incident",
+      "description": "Wildfire incident tracking record across Algerian Wilayas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 256 },
+        "titleAr": { "type": "string", "maxLength": 256 },
+        "wilaya": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["reported", "confirmed", "active_response", "contained", "controlled", "extinguished"] },
+        "riskLevel": { "type": "string", "enum": ["low", "moderate", "high", "critical", "extreme"] },
+        "updatedAt": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "code", "wilaya", "status"]
+    },
+    "Resource": {
+      "title": "Resource",
+      "description": "Emergency firefighting vehicle, aircraft or civil protection unit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "callSign": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 64 },
+        "wilaya": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["available", "dispatched", "on_scene", "maintenance", "refueling"] },
+        "updatedAt": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "callSign", "type", "wilaya", "status"]
+    },
+    "CitizenReport": {
+      "title": "CitizenReport",
+      "description": "Civilian smoke or fire observation report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "wilaya": { "type": "string", "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["pending", "verified", "rejected", "dispatched"] },
+        "createdAt": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "wilaya", "status"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with role-based access control level (Citizen, FieldUnit, CentralCommand)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["Citizen", "FieldUnit", "CentralCommand"] },
+        "unitName": { "type": "string", "maxLength": 128 },
+        "wilaya": { "type": "string", "maxLength": 128 },
+        "badgeNumber": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Authenticated user profile and assigned RBAC permissions"
+    },
+    "/incidents/{incidentId}": {
+      "schema": "Incident",
+      "description": "Active and historical wildfire incidents"
+    },
+    "/resources/{resourceId}": {
+      "schema": "Resource",
+      "description": "Civil protection and forestry response fleet assets"
+    },
+    "/citizenReports/{reportId}": {
+      "schema": "CitizenReport",
+      "description": "Civilian smoke and wildfire incident reports"
+    }
+  }
+}

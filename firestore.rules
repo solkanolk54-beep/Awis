@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny all unknown collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Health / connectivity probe
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // User Profiles & RBAC State (CentralCommand, FieldUnit, Citizen)
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if isValidId(userId) && (request.auth != null && request.auth.uid == userId);
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Wildfire Incidents (Public read for early warning & emergency response)
+    match /incidents/{incidentId} {
+      allow read: if true;
+      allow write: if isValidId(incidentId);
+    }
+
+    // Emergency Response Resources & Fleet
+    match /resources/{resourceId} {
+      allow read: if true;
+      allow write: if isValidId(resourceId);
+    }
+
+    // Citizen Smoke & Fire Observation Reports
+    match /citizenReports/{reportId} {
+      allow read: if true;
+      allow create: if isValidId(reportId);
+      allow update, delete: if isValidId(reportId);
+    }
+  }
+}

@@ -824,8 +824,16 @@ Required Resources: ${assessment.isochrones.twentyFourHour.requiredPumperUnits} 
   };
 
   return (
-    <div className={`fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-hidden animate-fadeIn`}>
-      <div className={`relative w-full ${isFullscreen ? 'h-full max-w-none rounded-none' : 'max-w-7xl max-h-[94vh] rounded-2xl'} bg-[#090d16] border border-slate-700 shadow-2xl flex flex-col overflow-hidden`}>
+    <div 
+      id="predictive-burn-rate-modal-backdrop"
+      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-hidden animate-fadeIn cursor-pointer`}
+    >
+      <div 
+        id="predictive-burn-rate-modal-content"
+        onClick={(e) => e.stopPropagation()}
+        className={`relative w-full ${isFullscreen ? 'h-full max-w-none rounded-none' : 'max-w-7xl max-h-[94vh] rounded-2xl'} bg-[#090d16] border border-slate-700 shadow-2xl flex flex-col overflow-hidden cursor-default`}
+      >
         
         {/* TOP MODAL HEADER */}
         <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700/80 flex flex-wrap items-center justify-between gap-3">
