@@ -1,3 +1,9 @@
+/**
+ * AWIS Offline Cache & Tactical GIS Persistence Service
+ * Upgraded to use IndexedDB (awis_tactical_db) for multi-gigabyte capacity,
+ * with synchronous LocalStorage mirror for instant initial frame rendering.
+ */
+
 import { 
   WildfireIncident, 
   ForestZone, 
@@ -6,6 +12,17 @@ import {
   DetectionSignal 
 } from '../types';
 import { LiveWeatherData } from './liveWeatherService';
+import {
+  saveAllGISDataIDB,
+  loadAllGISDataIDB,
+  queueReportIDB,
+  getQueuedReportsIDB,
+  clearQueuedReportsIDB,
+  getTacticalStorageStatsIDB,
+  IDBQueuedReport,
+  IDBStats
+} from './indexedDbService';
+import { registerTacticalServiceWorker } from '../registerServiceWorker';
 
 const CACHE_KEYS = {
   INCIDENTS: 'awis_offline_incidents_v1',
@@ -27,17 +44,20 @@ export interface OfflineCacheStats {
   signalsCount: number;
   lastSyncFormatted: string | null;
   pendingQueuedReports: number;
+  storageType?: 'IndexedDB' | 'LocalStorage';
+  estimatedStorageUsageMB?: number;
 }
 
 export interface QueuedOfflineReport {
   id: string;
   timestamp: string;
-  type: 'citizen_report' | 'field_note';
+  type: 'citizen_report' | 'field_note' | 'incident_update';
   payload: Record<string, unknown>;
 }
 
 /**
- * Persists complete GIS spatial markers and alerts into localStorage for offline mountain/forest missions
+ * Persists complete GIS spatial markers and alerts into IndexedDB (multi-gigabyte storage)
+ * and keeps a synchronous LocalStorage mirror for immediate mount hydration.
  */
 export function saveOfflineGISState(data: {
   incidents: WildfireIncident[];
@@ -47,28 +67,36 @@ export function saveOfflineGISState(data: {
   signals: DetectionSignal[];
   weather?: LiveWeatherData | null;
 }): boolean {
+  // 1. Primary: Save to IndexedDB (asynchronously with unlimited tactical capacity)
+  saveAllGISDataIDB(data).catch((err) => {
+    console.warn('[AWIS Offline Cache] IndexedDB background save notice:', err);
+  });
+
+  // 2. Synchronous mirror to localStorage for instant non-blocking hydration
   try {
-    localStorage.setItem(CACHE_KEYS.INCIDENTS, JSON.stringify(data.incidents));
-    localStorage.setItem(CACHE_KEYS.FORESTS, JSON.stringify(data.forests));
-    localStorage.setItem(CACHE_KEYS.WATER_POINTS, JSON.stringify(data.waterPoints));
-    localStorage.setItem(CACHE_KEYS.RESOURCES, JSON.stringify(data.resources));
-    localStorage.setItem(CACHE_KEYS.SIGNALS, JSON.stringify(data.signals));
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(CACHE_KEYS.INCIDENTS, JSON.stringify(data.incidents));
+      localStorage.setItem(CACHE_KEYS.FORESTS, JSON.stringify(data.forests));
+      localStorage.setItem(CACHE_KEYS.WATER_POINTS, JSON.stringify(data.waterPoints));
+      localStorage.setItem(CACHE_KEYS.RESOURCES, JSON.stringify(data.resources));
+      localStorage.setItem(CACHE_KEYS.SIGNALS, JSON.stringify(data.signals));
 
-    if (data.weather) {
-      localStorage.setItem(CACHE_KEYS.WEATHER, JSON.stringify(data.weather));
+      if (data.weather) {
+        localStorage.setItem(CACHE_KEYS.WEATHER, JSON.stringify(data.weather));
+      }
+
+      const now = new Date().toISOString();
+      localStorage.setItem(CACHE_KEYS.LAST_SYNC, now);
     }
-
-    const now = new Date().toISOString();
-    localStorage.setItem(CACHE_KEYS.LAST_SYNC, now);
     return true;
   } catch (error) {
-    console.warn('[AWIS Offline Cache] Storage write error:', error);
-    return false;
+    console.warn('[AWIS Offline Cache] LocalStorage quota reached, IndexedDB remains active:', error);
+    return true;
   }
 }
 
 /**
- * Recovers all GIS markers and alerts from localStorage if internet is lost
+ * Recovers all GIS markers and alerts synchronously from local storage for initial paint.
  */
 export function loadOfflineGISState(): {
   incidents: WildfireIncident[] | null;
@@ -80,6 +108,18 @@ export function loadOfflineGISState(): {
   lastSync: string | null;
 } {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return {
+        incidents: null,
+        forests: null,
+        waterPoints: null,
+        resources: null,
+        signals: null,
+        weather: null,
+        lastSync: null
+      };
+    }
+
     const rawIncidents = localStorage.getItem(CACHE_KEYS.INCIDENTS);
     const rawForests = localStorage.getItem(CACHE_KEYS.FORESTS);
     const rawWaterPoints = localStorage.getItem(CACHE_KEYS.WATER_POINTS);
@@ -128,10 +168,39 @@ export function loadOfflineGISState(): {
 }
 
 /**
+ * Recovers all GIS entities asynchronously from IndexedDB
+ */
+export async function loadOfflineGISStateAsync(): Promise<{
+  incidents: WildfireIncident[];
+  forests: ForestZone[];
+  waterPoints: WaterPoint[];
+  resources: EmergencyResource[];
+  signals: DetectionSignal[] | null;
+  weather: LiveWeatherData | null;
+  lastSync: string | null;
+}> {
+  return loadAllGISDataIDB();
+}
+
+/**
  * Inspects the status and storage count of the local offline cache
  */
 export function getOfflineCacheStats(): OfflineCacheStats {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return {
+        hasCachedData: false,
+        incidentsCount: 0,
+        forestsCount: 0,
+        waterPointsCount: 0,
+        resourcesCount: 0,
+        signalsCount: 0,
+        lastSyncFormatted: null,
+        pendingQueuedReports: 0,
+        storageType: 'IndexedDB'
+      };
+    }
+
     const rawInc = localStorage.getItem(CACHE_KEYS.INCIDENTS);
     const rawFor = localStorage.getItem(CACHE_KEYS.FORESTS);
     const rawWat = localStorage.getItem(CACHE_KEYS.WATER_POINTS);
@@ -154,14 +223,15 @@ export function getOfflineCacheStats(): OfflineCacheStats {
     }
 
     return {
-      hasCachedData: incidentsCount > 0,
+      hasCachedData: incidentsCount > 0 || forestsCount > 0,
       incidentsCount,
       forestsCount,
       waterPointsCount,
       resourcesCount,
       signalsCount,
       lastSyncFormatted,
-      pendingQueuedReports
+      pendingQueuedReports,
+      storageType: 'IndexedDB'
     };
   } catch {
     return {
@@ -172,30 +242,61 @@ export function getOfflineCacheStats(): OfflineCacheStats {
       resourcesCount: 0,
       signalsCount: 0,
       lastSyncFormatted: null,
-      pendingQueuedReports: 0
+      pendingQueuedReports: 0,
+      storageType: 'IndexedDB'
     };
   }
 }
 
 /**
+ * Gets high-precision storage metrics directly from IndexedDB
+ */
+export async function getOfflineCacheStatsAsync(): Promise<OfflineCacheStats> {
+  const idbStats: IDBStats = await getTacticalStorageStatsIDB();
+  return {
+    hasCachedData: idbStats.hasData,
+    incidentsCount: idbStats.incidentsCount,
+    forestsCount: idbStats.forestsCount,
+    waterPointsCount: idbStats.waterPointsCount,
+    resourcesCount: idbStats.resourcesCount,
+    signalsCount: 0,
+    lastSyncFormatted: idbStats.lastSyncFormatted,
+    pendingQueuedReports: idbStats.queuedReportsCount,
+    storageType: 'IndexedDB',
+    estimatedStorageUsageMB: idbStats.estimatedStorageUsageMB
+  };
+}
+
+/**
  * Stores a report or note locally when field agents or citizens have no cellular signal
+ * Writes to both IndexedDB (primary) and localStorage mirror.
  */
 export function queueOfflineReport(report: {
-  type: 'citizen_report' | 'field_note';
+  type: 'citizen_report' | 'field_note' | 'incident_update';
   payload: Record<string, unknown>;
 }): void {
+  const newReport: QueuedOfflineReport = {
+    id: `offline_rep_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    timestamp: new Date().toISOString(),
+    type: report.type,
+    payload: report.payload
+  };
+
+  // 1. IndexedDB persistence
+  queueReportIDB(newReport).catch((err) => {
+    console.warn('[AWIS Offline Queue] IndexedDB queue write notice:', err);
+  });
+
+  // 2. LocalStorage mirror for immediate UI sync
   try {
-    const raw = localStorage.getItem(CACHE_KEYS.QUEUED_REPORTS);
-    const list: QueuedOfflineReport[] = raw ? JSON.parse(raw) : [];
-    list.push({
-      id: `offline_rep_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-      timestamp: new Date().toISOString(),
-      type: report.type,
-      payload: report.payload
-    });
-    localStorage.setItem(CACHE_KEYS.QUEUED_REPORTS, JSON.stringify(list));
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem(CACHE_KEYS.QUEUED_REPORTS);
+      const list: QueuedOfflineReport[] = raw ? JSON.parse(raw) : [];
+      list.push(newReport);
+      localStorage.setItem(CACHE_KEYS.QUEUED_REPORTS, JSON.stringify(list));
+    }
   } catch (err) {
-    console.warn('[AWIS Offline Queue] Failed to save offline item:', err);
+    console.warn('[AWIS Offline Queue] LocalStorage queue mirror error:', err);
   }
 }
 
@@ -204,6 +305,7 @@ export function queueOfflineReport(report: {
  */
 export function getQueuedOfflineReports(): QueuedOfflineReport[] {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
     const raw = localStorage.getItem(CACHE_KEYS.QUEUED_REPORTS);
     return raw ? JSON.parse(raw) : [];
   } catch {
@@ -212,36 +314,45 @@ export function getQueuedOfflineReports(): QueuedOfflineReport[] {
 }
 
 /**
- * Clears pending reports once internet is restored and data is synchronized
+ * Returns pending reports directly from IndexedDB
+ */
+export async function getQueuedOfflineReportsAsync(): Promise<QueuedOfflineReport[]> {
+  const reports = await getQueuedReportsIDB();
+  return reports.map((r) => ({
+    id: r.id,
+    timestamp: r.timestamp,
+    type: r.type,
+    payload: r.payload
+  }));
+}
+
+/**
+ * Clears pending reports from both IndexedDB and localStorage once synchronized
  */
 export function clearQueuedOfflineReports(): void {
+  // Clear IndexedDB
+  clearQueuedReportsIDB().catch((err) => {
+    console.warn('[AWIS Offline Queue] Failed to clear IndexedDB reports queue:', err);
+  });
+
+  // Clear LocalStorage
   try {
-    localStorage.removeItem(CACHE_KEYS.QUEUED_REPORTS);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(CACHE_KEYS.QUEUED_REPORTS);
+    }
   } catch (err) {
-    console.warn('[AWIS Offline Queue] Error clearing queue:', err);
+    console.warn('[AWIS Offline Queue] Error clearing localStorage queue:', err);
   }
 }
 
 /**
- * Safely unregisters stale Service Workers and clears cache storage to prevent duplicate React instances
+ * Tactical Service Worker registration
  */
 export async function registerServiceWorker(): Promise<boolean> {
-  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        await registration.unregister();
-      }
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        for (const key of keys) {
-          await caches.delete(key);
-        }
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  const res = await registerTacticalServiceWorker();
+  return res.registered;
 }
+
+export { syncQueueToCloud } from '../firebaseConfig';
+export type { SyncQueueResult } from '../firebaseConfig';
+export * from './indexedDbService';

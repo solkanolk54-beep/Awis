@@ -49,6 +49,7 @@ import {
   queueOfflineReport,
   getQueuedOfflineReports,
   clearQueuedOfflineReports,
+  syncQueueToCloud,
   OfflineCacheStats,
   QueuedOfflineReport
 } from './services/offlineCacheService';
@@ -138,6 +139,7 @@ function AppContent() {
   const [showOfflineModal, setShowOfflineModal] = useState<boolean>(false);
   const [offlineStats, setOfflineStats] = useState<OfflineCacheStats>(() => getOfflineCacheStats());
   const [queuedReports, setQueuedReports] = useState<QueuedOfflineReport[]>(() => getQueuedOfflineReports());
+  const [isSyncingQueue, setIsSyncingQueue] = useState<boolean>(false);
 
   // Active Selected Entities
   const [selectedIncident, setSelectedIncident] = useState<WildfireIncident | null>(SAMPLE_INCIDENTS[0]);
@@ -218,6 +220,39 @@ function AppContent() {
       ...prev,
       ...updates
     }));
+  };
+
+  // Computed state for active modals to coordinate backdrop & z-index with GISMap
+  const isAnyAppModalActive = Boolean(
+    showIncidentModal ||
+    showForestModal ||
+    showCitizenModal ||
+    showFieldOpsModal ||
+    showSimulationModal ||
+    showAnalyticsModal ||
+    showPostFireModal ||
+    showOfflineModal ||
+    showNotificationModal ||
+    showDroneSimulationModal ||
+    showBurnRateModal ||
+    showSatelliteModal ||
+    showEvacuationModal
+  );
+
+  const handleDismissAllModals = () => {
+    setShowIncidentModal(false);
+    setShowForestModal(false);
+    setShowCitizenModal(false);
+    setShowFieldOpsModal(false);
+    setShowSimulationModal(false);
+    setShowAnalyticsModal(false);
+    setShowPostFireModal(false);
+    setShowOfflineModal(false);
+    setShowNotificationModal(false);
+    setShowDroneSimulationModal(false);
+    setShowBurnRateModal(false);
+    setShowSatelliteModal(false);
+    setShowEvacuationModal(false);
   };
 
   const t = translations[currentLang];
@@ -389,32 +424,47 @@ function AppContent() {
     }
   };
 
-  // Sync Queued Offline Reports when internet is restored
-  const handleSyncQueuedReports = () => {
+  // G-02: Sync Queued Offline Reports to Cloud Firestore via writeBatch with LWW
+  const handleSyncQueuedReports = async () => {
     const pending = getQueuedOfflineReports();
     if (pending.length === 0) return;
 
-    // Dispatch queued items into active incidents timeline
-    setIncidents((prev) =>
-      prev.map((inc) => ({
-        ...inc,
-        timeline: [
-          ...inc.timeline,
-          {
-            id: `evt-offline-sync-${Date.now()}`,
-            timestamp: new Date().toISOString().substring(11, 19),
-            type: 'verification',
-            title: `Synced ${pending.length} Offline Field Reports`,
-            description: 'Cached field intelligence successfully reconciled with Central Command.',
-            sourceBadge: 'Offline Buffer Reconciled'
-          }
-        ]
-      }))
-    );
+    setIsSyncingQueue(true);
+    try {
+      const syncRes = await syncQueueToCloud();
+      console.log('[AWIS Auto-Sync] Queued reports reconciled to Cloud Firestore:', syncRes);
 
-    clearQueuedOfflineReports();
-    setQueuedReports([]);
-    setOfflineStats(getOfflineCacheStats());
+      if (syncRes.success) {
+        // Dispatch verified reconciliation event into active incidents timeline
+        setIncidents((prev) =>
+          prev.map((inc) => ({
+            ...inc,
+            timeline: [
+              ...inc.timeline,
+              {
+                id: `evt-offline-sync-${Date.now()}`,
+                timestamp: new Date().toISOString().substring(11, 19),
+                type: 'verification',
+                title: currentLang === 'ar'
+                  ? `مزامنة سحابية: تم رفع ${syncRes.syncedCount} بلاغ إلى غرفة القيادة`
+                  : `Cloud Sync: Reconciled ${syncRes.syncedCount} Offline Reports`,
+                description: currentLang === 'ar'
+                  ? `تم تطبيق بروتوكول Last-Write-Wins وفض ${syncRes.conflictsResolved} نزاع زمني بنجاح داخل قاعدة بيانات Firestore.`
+                  : `Applied Last-Write-Wins (LWW) conflict resolution (${syncRes.conflictsResolved} timestamp conflicts reconciled) into Cloud Firestore.`,
+                sourceBadge: 'Cloud Batch LWW'
+              }
+            ]
+          }))
+        );
+
+        setQueuedReports(getQueuedOfflineReports());
+        setOfflineStats(getOfflineCacheStats());
+      }
+    } catch (err) {
+      console.error('[AWIS Auto-Sync] Failed to sync offline queue:', err);
+    } finally {
+      setIsSyncingQueue(false);
+    }
   };
 
   // Manual cache refresh handler
@@ -430,21 +480,29 @@ function AppContent() {
     setOfflineStats(getOfflineCacheStats());
   };
 
-  // Listen for browser Online/Offline state & hydrate offline cache
+  // Listen for browser Online/Offline state & auto-sync pending offline queue
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      console.log('[AWIS] Network restored: Online');
+      console.log('[AWIS Auto-Sync] Network restored: Online. Triggering automatic cloud sync...');
       handleSyncQueuedReports();
     };
 
     const handleOffline = () => {
       setIsOnline(false);
-      console.warn('[AWIS] Network lost: Running on Offline LocalStorage & ServiceWorker Cache');
+      console.warn('[AWIS] Network lost: Running on Offline LocalStorage & IndexedDB Cache');
     };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    // Initial check: trigger auto-sync if online and pending reports exist
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const initialPending = getQueuedOfflineReports();
+      if (initialPending.length > 0) {
+        handleSyncQueuedReports();
+      }
+    }
 
     // Initial check: if cache exists, hydrate if offline; else initialize
     const cached = loadOfflineGISState();
@@ -894,6 +952,8 @@ function AppContent() {
               isFirmsRefreshing={isFirmsRefreshing}
               lastFirmsSyncTime={lastFirmsSyncTime}
               onPromoteClusterToIncident={handlePromoteClusterToIncident}
+              isModalActive={isAnyAppModalActive}
+              onDismissModal={handleDismissAllModals}
             />
           </div>
 
@@ -1051,6 +1111,7 @@ function AppContent() {
           offlineStats={offlineStats}
           queuedReports={queuedReports}
           onSyncQueuedReports={handleSyncQueuedReports}
+          isSyncing={isSyncingQueue}
           onRefreshCache={handleManualCacheRefresh}
         />
       )}

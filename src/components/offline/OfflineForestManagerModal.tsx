@@ -37,6 +37,7 @@ interface OfflineForestManagerModalProps {
   currentLang: Language;
   queuedReports: QueuedOfflineReport[];
   onSyncQueuedReports: () => void;
+  isSyncing?: boolean;
 }
 
 export const OfflineForestManagerModal: React.FC<OfflineForestManagerModalProps> = ({
@@ -49,7 +50,8 @@ export const OfflineForestManagerModal: React.FC<OfflineForestManagerModalProps>
   onRefreshCache,
   currentLang,
   queuedReports,
-  onSyncQueuedReports
+  onSyncQueuedReports,
+  isSyncing = false
 }) => {
   const cacheStats = propCacheStats || offlineStats || {
     hasCachedData: false,
@@ -163,13 +165,18 @@ export const OfflineForestManagerModal: React.FC<OfflineForestManagerModalProps>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
                 <HardDrive className="w-4 h-4 text-emerald-400" />
-                {currentLang === 'ar' ? 'حالة البيانات الجغرافية المخزنة محلياً (LocalStorage & ServiceWorker)' : 'Cached GIS Data in LocalStorage & ServiceWorker'}
+                {currentLang === 'ar' ? 'حالة التخزين التكتيكي (IndexedDB & PWA Service Worker)' : 'Tactical Offline Storage (IndexedDB & PWA SW)'}
               </span>
-              {cacheStats.lastSyncFormatted && (
-                <span className="text-[11px] text-slate-500 font-mono">
-                  {currentLang === 'ar' ? 'آخر تخزين:' : 'Last cached:'} {cacheStats.lastSyncFormatted}
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {currentLang === 'ar' ? 'سعة جيجابايتية فائقة (No 5MB limit)' : 'Multi-GB Capacity'}
                 </span>
-              )}
+                {cacheStats.lastSyncFormatted && (
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    {currentLang === 'ar' ? 'آخر تخزين:' : 'Last cached:'} {cacheStats.lastSyncFormatted}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -225,15 +232,17 @@ export const OfflineForestManagerModal: React.FC<OfflineForestManagerModalProps>
                 </div>
                 <button
                   onClick={onSyncQueuedReports}
-                  disabled={!effectiveOnline}
+                  disabled={!effectiveOnline || isSyncing}
                   className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                    effectiveOnline 
+                    effectiveOnline && !isSyncing
                       ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow' 
-                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-700 text-slate-400 cursor-not-allowed'
                   }`}
                 >
-                  <RefreshCw className="w-3 h-3" />
-                  {currentLang === 'ar' ? 'مزامنة ورفع الآن' : 'Sync Now'}
+                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                  {isSyncing 
+                    ? (currentLang === 'ar' ? 'جاري الرفع...' : 'Syncing...') 
+                    : (currentLang === 'ar' ? 'مزامنة ورفع الآن' : 'Sync Now')}
                 </button>
               </div>
               <p className="text-[11px] text-amber-200/80">

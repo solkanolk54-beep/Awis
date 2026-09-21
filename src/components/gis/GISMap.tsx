@@ -148,6 +148,8 @@ interface GISMapProps {
   isFirmsRefreshing?: boolean;
   lastFirmsSyncTime?: Date | null;
   onPromoteClusterToIncident?: (incident: WildfireIncident) => void;
+  isModalActive?: boolean;
+  onDismissModal?: () => void;
 }
 
 export const GISMap: React.FC<GISMapProps> = ({
@@ -176,7 +178,9 @@ export const GISMap: React.FC<GISMapProps> = ({
   onForceRefreshFirms,
   isFirmsRefreshing = false,
   lastFirmsSyncTime,
-  onPromoteClusterToIncident
+  onPromoteClusterToIncident,
+  isModalActive: isModalActiveProp,
+  onDismissModal
 }) => {
   const t = translations[currentLang];
 
@@ -976,10 +980,42 @@ export const GISMap: React.FC<GISMapProps> = ({
     }
   };
 
+  // Active modal detection & dismiss handling (both internal GISMap modals and external parent modals)
+  const isInternalModalActive = Boolean(
+    isSatelliteModalOpen ||
+    showNdviControl ||
+    showHeatmapControl ||
+    (showClusterInspector && selectedClusterZone)
+  );
+  const isAnyModalActive = Boolean(isModalActiveProp || isInternalModalActive);
+
+  const handleDismissActiveModal = useCallback(() => {
+    if (isSatelliteModalOpen) setIsSatelliteModalOpen(false);
+    if (showNdviControl) setShowNdviControl(false);
+    if (showHeatmapControl) setShowHeatmapControl(false);
+    if (showClusterInspector) setShowClusterInspector(false);
+    if (onDismissModal) onDismissModal();
+  }, [isSatelliteModalOpen, showNdviControl, showHeatmapControl, showClusterInspector, onDismissModal]);
+
+  // Dismiss active modal on ESC key press
+  useEffect(() => {
+    if (!isAnyModalActive) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleDismissActiveModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAnyModalActive, handleDismissActiveModal]);
+
   return (
-    <div className="relative w-full h-full min-h-[580px] bg-[#070b13] overflow-hidden select-none border border-slate-800 rounded-xl shadow-2xl flex flex-col">
+    <div 
+      id="gis-map-container"
+      className="relative z-10 w-full h-full min-h-[580px] bg-[#070b13] overflow-hidden select-none border border-slate-800 rounded-xl shadow-2xl flex flex-col"
+    >
       {/* Top Map Operational Toolbar */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex flex-wrap items-center justify-between pointer-events-none gap-2">
+      <div className={`absolute top-3 left-3 right-3 ${isInternalModalActive ? 'z-50' : 'z-30'} flex flex-wrap items-center justify-between pointer-events-none gap-2`}>
         {/* Geographic Coordinate Inspector Readout */}
         <div className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-xs font-mono shadow-lg text-slate-300">
           <Crosshair className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
@@ -1221,7 +1257,8 @@ export const GISMap: React.FC<GISMapProps> = ({
             {/* Heatmap Opacity Adjustment Dropdown Popover */}
             {showHeatmapControl && (
               <div 
-                className="absolute top-full mt-2 left-0 z-40 w-72 p-3 bg-slate-950/95 backdrop-blur-xl border border-rose-500/50 rounded-xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2"
+                id="heatmap-opacity-modal"
+                className="absolute top-full mt-2 left-0 z-50 w-72 p-3 bg-slate-950/95 backdrop-blur-xl border border-rose-500/50 rounded-xl shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2 pointer-events-auto"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
@@ -1389,7 +1426,8 @@ export const GISMap: React.FC<GISMapProps> = ({
             {/* Dynamic NDVI Calculation & Assessment Popover Dropdown */}
             {showNdviControl && (
               <div 
-                className="absolute top-full mt-2 left-0 z-40 w-80 sm:w-96 p-4 bg-slate-950/95 backdrop-blur-xl border border-emerald-500/50 rounded-xl shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2 text-slate-200"
+                id="ndvi-calculation-modal"
+                className="absolute top-full mt-2 left-0 z-50 w-80 sm:w-96 p-4 bg-slate-950/95 backdrop-blur-xl border border-emerald-500/50 rounded-xl shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2 text-slate-200 pointer-events-auto"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Header with Sentinel-2 MSI branding */}
@@ -4634,7 +4672,8 @@ export const GISMap: React.FC<GISMapProps> = ({
       {selectedClusterZone && layers.firmsClusters && showClusterInspector && (
         <div 
           id="cluster-inspector-card"
-          className="absolute top-16 left-4 z-40 w-92 max-w-[calc(100vw-2rem)] bg-slate-950/95 backdrop-blur-xl border border-rose-500/70 rounded-xl p-3.5 shadow-2xl text-xs space-y-3 animate-in fade-in slide-in-from-top-2"
+          className="absolute top-16 left-4 z-50 w-92 max-w-[calc(100vw-2rem)] bg-slate-950/95 backdrop-blur-xl border border-rose-500/70 rounded-xl p-3.5 shadow-2xl text-xs space-y-3 animate-in fade-in slide-in-from-top-2"
+          onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-rose-900/60 pb-2">
@@ -5394,6 +5433,23 @@ export const GISMap: React.FC<GISMapProps> = ({
           }}
           onClose={() => setShowSteepnessHUD(false)}
           currentLang={currentLang}
+        />
+      )}
+
+      {/* Absolute-positioned Backdrop Overlay for Active Modals */}
+      {isAnyModalActive && (
+        <div
+          id="gis-map-modal-backdrop"
+          onClick={handleDismissActiveModal}
+          className="absolute inset-0 z-40 bg-black/60 backdrop-blur-[2px] transition-all duration-200 animate-in fade-in cursor-pointer"
+          role="button"
+          tabIndex={0}
+          aria-label={currentLang === 'ar' ? 'إغلاق النافذة المنبثقة والنقر في الخارج' : 'Dismiss active modal by clicking outside'}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' || e.key === 'Enter') {
+              handleDismissActiveModal();
+            }
+          }}
         />
       )}
 

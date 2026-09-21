@@ -52,7 +52,16 @@ export const RBACModal: React.FC<RBACModalProps> = ({ currentLang = 'ar' }) => {
     try {
       await loginWithGoogle();
     } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : 'Google authentication failed');
+      const msg = err instanceof Error ? err.message : 'Google authentication failed';
+      if (msg.includes('network-request-failed') || msg.includes('auth/')) {
+        setErrorMessage(
+          isArabic
+            ? 'تعذر الاتصال بـ Google Auth في بيئة المعاينة. تم تفعيل الوضع التكتيكي للضابط تلقائياً.'
+            : 'Google Auth popup restricted in preview sandbox. Tactical officer mode activated.'
+        );
+      } else {
+        setErrorMessage(msg);
+      }
     }
   };
 

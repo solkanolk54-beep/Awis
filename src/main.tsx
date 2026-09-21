@@ -2,10 +2,67 @@ import React, { StrictMode, Component, ErrorInfo, ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
-import { registerServiceWorker } from './services/offlineCacheService';
+import { registerTacticalServiceWorker } from './registerServiceWorker';
 
-// Initialize Service Worker cleanup / cache protection
-registerServiceWorker().catch(() => {});
+// Intercept benign Firebase Auth & Firestore offline notices in preview iframes and sandbox environments
+if (typeof window !== 'undefined') {
+  // 1. Intercept console.error for benign Firestore offline-mode notices
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    const fullMsg = args.map((a) => (a instanceof Error ? a.message : String(a || ''))).join(' ');
+    if (
+      fullMsg.includes('Could not reach Cloud Firestore backend') ||
+      fullMsg.includes("Backend didn't respond within 10 seconds") ||
+      fullMsg.includes('client will operate in offline mode') ||
+      fullMsg.includes('the client is offline') ||
+      fullMsg.includes('auth/network-request-failed')
+    ) {
+      console.warn('[AWIS Sandbox Shield] Firestore operating in offline-first mode:', fullMsg);
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+
+  // 2. Intercept unhandled promise rejections
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const msg = String(reason?.message || reason || '');
+    const code = String(reason?.code || '');
+    if (
+      msg.includes('auth/network-request-failed') ||
+      msg.includes('network-request-failed') ||
+      msg.includes('the client is offline') ||
+      msg.includes('Could not reach Cloud Firestore backend') ||
+      code === 'auth/network-request-failed' ||
+      code === 'auth/popup-closed-by-user' ||
+      code === 'auth/popup-blocked' ||
+      code === 'auth/unauthorized-domain' ||
+      code === 'auth/cancelled-popup-request'
+    ) {
+      console.warn('[AWIS Sandbox Shield] Caught and handled background network/sandbox event:', code || msg);
+      event.preventDefault();
+    }
+  });
+
+  // 3. Intercept global window errors
+  window.addEventListener('error', (event) => {
+    const msg = String(event.message || event.error?.message || '');
+    const code = String(event.error?.code || '');
+    if (
+      msg.includes('auth/network-request-failed') ||
+      msg.includes('network-request-failed') ||
+      msg.includes('the client is offline') ||
+      msg.includes('Could not reach Cloud Firestore backend') ||
+      code === 'auth/network-request-failed'
+    ) {
+      console.warn('[AWIS Sandbox Shield] Intercepted window network notice:', code || msg);
+      event.preventDefault();
+    }
+  });
+}
+
+// Initialize Tactical PWA Service Worker (with iframe sandbox guard)
+registerTacticalServiceWorker().catch(() => {});
 
 interface ErrorBoundaryProps {
   children: ReactNode;

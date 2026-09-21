@@ -40,5 +40,11 @@ service cloud.firestore {
       allow create: if isValidId(reportId);
       allow update, delete: if isValidId(reportId);
     }
+
+    match /citizen_reports/{reportId} {
+      allow read: if true;
+      allow create: if isValidId(reportId);
+      allow update, delete: if isValidId(reportId);
+    }
   }
 }

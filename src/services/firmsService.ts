@@ -1,5 +1,6 @@
 import { WildfireIncident, RiskLevel, DetectionSignal } from '../types';
 import { ALGERIA_WILAYAS, ALGERIA_FORESTS } from '../data/algeriaData';
+import { saveCachedHotspotsIDB, loadCachedHotspotsIDB } from './indexedDbService';
 
 export interface FirmsDetection {
   id: string;
@@ -29,7 +30,7 @@ export interface FirmsDetection {
 export interface FirmsUplinkStatus {
   isLiveUplink: boolean;
   hasApiKey: boolean;
-  keySource: 'user_input' | 'environment' | 'none';
+  keySource: 'user_input' | 'environment' | 'indexeddb' | 'none';
   coverageScope: 'national' | 'tell_atlas';
   lastFetchTime: string | null;
   totalHotspots: number;
@@ -44,6 +45,8 @@ export interface FirmsUplinkStatus {
 export const ALGERIA_NATIONAL_BBOX = '-8.7,18.9,12.0,37.1';
 // 2. Tell Atlas Forest Spine: High-risk Mediterranean forested ridge
 export const ALGERIA_TELL_ATLAS_BBOX = '-2.5,34.0,9.5,37.5';
+// 3. G-03 Standard Algerian Hotspot Sensing BBox: [2.2W, 18.9N, 12.0E, 37.1N]
+export const ALGERIA_PROXY_DEFAULT_BBOX = '-2.2,18.9,12.0,37.1';
 
 export const SATELLITE_SOURCES = [
   { id: 'VIIRS_NOAA20_NRT', name: 'VIIRS NOAA-20 (375m NRT)' },
@@ -174,7 +177,7 @@ export function setCoverageScope(scope: 'national' | 'tell_atlas'): void {
 }
 
 /**
- * Test a NASA FIRMS MAP Key against EOSDIS
+ * Test a NASA FIRMS MAP Key through secure backend proxy gateway
  */
 export async function testFirmsApiKey(key: string): Promise<{
   valid: boolean;
@@ -192,38 +195,30 @@ export async function testFirmsApiKey(key: string): Promise<{
   }
 
   try {
-    const testUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${cleanKey}/VIIRS_NOAA20_NRT/${ALGERIA_NATIONAL_BBOX}/1`;
-    const response = await fetch(testUrl, { signal: AbortSignal.timeout(9000) });
+    const response = await fetch('/api/firms/test', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ key: cleanKey }),
+      signal: AbortSignal.timeout(9000)
+    });
 
     if (!response.ok) {
       return {
         valid: false,
-        message: `HTTP Error ${response.status} from NASA EOSDIS Gateway.`,
-        messageAr: `خطأ اتصال من بوابة ناسا (رمز ${response.status}).`
+        message: `HTTP Error ${response.status} from NASA FIRMS Gateway.`,
+        messageAr: `خطأ اتصال من بوابة ناسا الفضائية (رمز ${response.status}).`
       };
     }
 
-    const text = await response.text();
-    if (text.toLowerCase().includes('invalid map_key') || text.toLowerCase().includes('not authorized')) {
-      return {
-        valid: false,
-        message: 'Invalid NASA MAP_KEY. Please verify your 32-character key at firms.modaps.eosdis.nasa.gov',
-        messageAr: 'مفتاح ناسا غير صالح. يرجى التحقق من المفتاح المكون من 32 حرفاً من موقع ناسا الرسمي.'
-      };
-    }
-
-    const parsed = parseFirmsCsv(text);
-    return {
-      valid: true,
-      message: `Uplink Verified! Successfully retrieved ${parsed.length} active thermal hotspots across Algeria.`,
-      messageAr: `تم الاتصال بنجاح! تم رصد ${parsed.length} بؤرة حرارية حية عبر التراب الوطني الجزائري.`,
-      hotspotsFound: parsed.length
-    };
+    const result = await response.json();
+    return result;
   } catch (err: any) {
     return {
       valid: false,
       message: `Connection failed: ${err?.message || 'Network timeout'}`,
-      messageAr: `تعذر الاتصال ببوابة ناسا: ${err?.message || 'انتهت مهلة الطلب'}`
+      messageAr: `تعذر الاتصال ببوابة الخادم الوسيط: ${err?.message || 'انتهت مهلة الطلب'}`
     };
   }
 }
@@ -480,7 +475,37 @@ export async function fetchFirmsHotspots(forceRefresh = false): Promise<FirmsDet
     return memoryCache;
   }
 
-  // Check localStorage cache if available
+  const mapKey = getFirmsApiKey();
+  const coverageScope = getCoverageScope();
+  const bbox = coverageScope === 'national' ? ALGERIA_PROXY_DEFAULT_BBOX : ALGERIA_TELL_ATLAS_BBOX;
+
+  // Offline detection: immediately attempt to read from IndexedDB g01_cache
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    try {
+      const idbHotspots = await loadCachedHotspotsIDB<FirmsDetection>();
+      if (idbHotspots && idbHotspots.length > 0) {
+        console.info('[NASA FIRMS] Operating offline: loaded hotspots from IndexedDB g01_cache.');
+        memoryCache = idbHotspots;
+        currentUplinkStatus = {
+          isLiveUplink: false,
+          hasApiKey: Boolean(mapKey),
+          keySource: 'indexeddb',
+          coverageScope,
+          lastFetchTime: new Date().toISOString(),
+          totalHotspots: idbHotspots.length,
+          totalFrpMw: Math.round(idbHotspots.reduce((sum, d) => sum + (d.frpMw || 0), 0)),
+          activeSensors: ['IndexedDB_g01_cache'],
+          statusMessageAr: `وضع عدم الاتصال التكتيكي (تم استرجاع ${idbHotspots.length} بؤرة حرارية من IndexedDB - g01_cache)`,
+          statusMessageEn: `Tactical Offline Mode (Restored ${idbHotspots.length} thermal hotspots from IndexedDB - g01_cache)`
+        };
+        return idbHotspots;
+      }
+    } catch (e) {
+      console.warn('[NASA FIRMS] Offline IndexedDB read exception:', e);
+    }
+  }
+
+  // Check localStorage cache if available and not forcing refresh
   if (!forceRefresh && typeof localStorage !== 'undefined') {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -496,69 +521,115 @@ export async function fetchFirmsHotspots(forceRefresh = false): Promise<FirmsDet
     }
   }
 
-  const mapKey = getFirmsApiKey();
-  const coverageScope = getCoverageScope();
-  const bbox = coverageScope === 'national' ? ALGERIA_NATIONAL_BBOX : ALGERIA_TELL_ATLAS_BBOX;
-
-  if (mapKey && typeof fetch !== 'undefined') {
+  // Query secure backend proxy gateway (/api/firms)
+  if (typeof fetch !== 'undefined') {
     try {
-      // Query operational satellite instruments concurrently
-      const sensorEndpoints = [
-        { id: 'VIIRS_NOAA20', name: 'VIIRS_NOAA20_NRT' },
-        { id: 'VIIRS_NOAA21', name: 'VIIRS_NOAA21_NRT' },
-        { id: 'VIIRS_SNPP', name: 'VIIRS_SNPP_NRT' },
-        { id: 'MODIS_TERRA', name: 'MODIS_NRT' }
-      ];
+      const proxyUrl = `/api/firms?bbox=${encodeURIComponent(bbox)}&days=1${forceRefresh ? '&forceRefresh=true' : ''}`;
+      const headers: Record<string, string> = {
+        'Accept': 'application/json'
+      };
+      if (mapKey) {
+        headers['x-firms-map-key'] = mapKey;
+      }
 
-      const queries = sensorEndpoints.map(async (sensor) => {
-        const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${mapKey}/${sensor.name}/${bbox}/1`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
-        if (!res.ok) return [];
-        const csv = await res.text();
-        if (csv.toLowerCase().includes('invalid map_key')) {
-          throw new Error('Invalid NASA MAP_KEY');
-        }
-        return parseFirmsCsv(csv, sensor.id as any);
+      const res = await fetch(proxyUrl, {
+        headers,
+        signal: AbortSignal.timeout(10000)
       });
 
-      const queryResults = await Promise.allSettled(queries);
-      const combinedDetections: FirmsDetection[] = [];
-      const successfulSensors: string[] = [];
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.hotspots) && data.hotspots.length > 0) {
+          // Normalize and enrich detections with Algerian administrative boundaries
+          const enrichedDetections: FirmsDetection[] = data.hotspots.map((h: any) => {
+            const loc = resolveWilayaAndLocation(h.latitude, h.longitude);
+            return {
+              id: h.id || `VIIRS-DZ-${Math.round(h.latitude * 1000)}-${Math.round(h.longitude * 1000)}`,
+              latitude: h.latitude,
+              longitude: h.longitude,
+              brightnessTempKelvin: h.brightnessTempKelvin || 365,
+              scanMeters: h.scanMeters || 375,
+              trackMeters: h.trackMeters || 375,
+              acqDate: h.acqDate || new Date().toISOString().split('T')[0],
+              acqTime: h.acqTime || '12:00 UTC',
+              satellite: h.satellite || 'VIIRS_NOAA20',
+              instrument: h.instrument || 'VIIRS',
+              confidence: h.confidence || 'nominal',
+              confidencePercent: h.confidencePercent || 85,
+              version: h.version || '2.0NRT',
+              brightT5Kelvin: h.brightT5Kelvin || 300,
+              frpMw: h.frpMw || 50,
+              daynight: h.daynight || 'D',
+              wilaya: loc.wilaya,
+              wilayaAr: loc.wilayaAr,
+              locationName: loc.locationName,
+              locationNameAr: loc.locationNameAr,
+              isGroundConfirmed: false,
+              detectedAtTimestamp: h.detectedAtTimestamp || new Date().toISOString()
+            };
+          });
 
-      queryResults.forEach((result, idx) => {
-        if (result.status === 'fulfilled' && result.value.length > 0) {
-          combinedDetections.push(...result.value);
-          successfulSensors.push(sensorEndpoints[idx].name);
+          // Sort by FRP descending
+          enrichedDetections.sort((a, b) => b.frpMw - a.frpMw);
+
+          currentUplinkStatus = {
+            isLiveUplink: Boolean(data.isLive),
+            hasApiKey: Boolean(mapKey || data.isLive),
+            keySource: mapKey 
+              ? (typeof localStorage !== 'undefined' && localStorage.getItem(USER_KEY_STORAGE) ? 'user_input' : 'environment')
+              : (data.isLive ? 'environment' : 'none'),
+            coverageScope,
+            lastFetchTime: data.timestamp || new Date().toISOString(),
+            totalHotspots: enrichedDetections.length,
+            totalFrpMw: data.totalFrpMw || Math.round(enrichedDetections.reduce((sum, d) => sum + d.frpMw, 0)),
+            activeSensors: data.sensors || ['VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT', 'VIIRS_SNPP_NRT'],
+            statusMessageAr: data.statusMessageAr || `اتصال حي نشط عبر البوابة الآمنة (${enrichedDetections.length} بؤرة حرارية)`,
+            statusMessageEn: data.statusMessage || `Active Secure Proxy Uplink (${enrichedDetections.length} thermal anomalies)`
+          };
+
+          memoryCache = enrichedDetections;
+
+          // Save to IndexedDB (g01_cache) for tactical offline availability
+          saveCachedHotspotsIDB(enrichedDetections).catch((err) => {
+            console.warn('[NASA FIRMS] Background IndexedDB cache write warning:', err);
+          });
+
+          // Secondary localStorage backup
+          persistCache(enrichedDetections);
+
+          return enrichedDetections;
         }
-      });
-
-      if (combinedDetections.length > 0) {
-        // Sort by FRP descending (highest energy fire first)
-        combinedDetections.sort((a, b) => b.frpMw - a.frpMw);
-
-        currentUplinkStatus = {
-          isLiveUplink: true,
-          hasApiKey: true,
-          keySource: typeof localStorage !== 'undefined' && localStorage.getItem(USER_KEY_STORAGE) ? 'user_input' : 'environment',
-          coverageScope,
-          lastFetchTime: new Date().toISOString(),
-          totalHotspots: combinedDetections.length,
-          totalFrpMw: Math.round(combinedDetections.reduce((sum, d) => sum + d.frpMw, 0)),
-          activeSensors: successfulSensors,
-          statusMessageAr: `اتصال حي نشط بالأقمار الصناعية (${combinedDetections.length} بؤرة شذوذ حراري مرصودة حالياً)`,
-          statusMessageEn: `Active Live Satellite Uplink (${combinedDetections.length} thermal hotspots currently detected)`
-        };
-
-        memoryCache = combinedDetections;
-        persistCache(combinedDetections);
-        return combinedDetections;
       }
     } catch (err: any) {
-      console.warn('[NASA FIRMS API] Live network query fallback to reference orbital pass:', err?.message || err);
+      console.warn('[NASA FIRMS Proxy] Uplink error, initiating IndexedDB g01_cache fallback:', err?.message || err);
     }
   }
 
-  // Fallback to high-fidelity reference NRT passes with updated timestamps
+  // Network Failure / Outage Fallback: Attempt to restore last valid hotspots from IndexedDB
+  try {
+    const idbHotspots = await loadCachedHotspotsIDB<FirmsDetection>();
+    if (idbHotspots && idbHotspots.length > 0) {
+      console.info(`[NASA FIRMS] Recovered ${idbHotspots.length} hotspots from IndexedDB g01_cache following network interruption.`);
+      memoryCache = idbHotspots;
+      currentUplinkStatus = {
+        isLiveUplink: false,
+        hasApiKey: Boolean(mapKey),
+        keySource: 'indexeddb',
+        coverageScope,
+        lastFetchTime: new Date().toISOString(),
+        totalHotspots: idbHotspots.length,
+        totalFrpMw: Math.round(idbHotspots.reduce((sum, d) => sum + (d.frpMw || 0), 0)),
+        activeSensors: ['IndexedDB_g01_cache'],
+        statusMessageAr: `وضع الطوارئ دون اتصال (تم استرجاع ${idbHotspots.length} بؤرة حرارية مخزنة من IndexedDB)`,
+        statusMessageEn: `Offline Emergency Mode: Restored ${idbHotspots.length} hotspots from IndexedDB cache`
+      };
+      return idbHotspots;
+    }
+  } catch (idbErr) {
+    console.warn('[NASA FIRMS] IndexedDB fallback check error:', idbErr);
+  }
+
+  // Final fallback to high-fidelity reference NRT passes with updated timestamps
   const refreshed = REALISTIC_ALGERIAN_HOTSPOTS.map((h, index) => ({
     ...h,
     detectedAtTimestamp: new Date(Date.now() - (12 + index * 25) * 60 * 1000).toISOString()
@@ -574,11 +645,11 @@ export async function fetchFirmsHotspots(forceRefresh = false): Promise<FirmsDet
     totalFrpMw: Math.round(refreshed.reduce((sum, d) => sum + d.frpMw, 0)),
     activeSensors: ['VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT', 'VIIRS_SNPP_NRT'],
     statusMessageAr: mapKey
-      ? 'وضع المحاكاة المؤقت (تعذر الاتصال ببوابة ناسا أو لا توجد حرائق نشطة في هذا المدار)'
-      : 'وضع المحاكاة المرجعية (أدخل مفتاح NASA MAP_KEY المجاني لتفعيل الاستشعار الحي)',
+      ? 'وضع المحاكاة المؤقت (تعذر الاتصال بالخادم الوسيط أو لا توجد حرائق في هذا المدار)'
+      : 'وضع المحاكاة المرجعية (أدخل مفتاح NASA MAP_KEY لتفعيل الاستشعار الحي)',
     statusMessageEn: mapKey
-      ? 'Standby pass mode (NASA gateway reached with 0 detections or transient timeout)'
-      : 'Reference orbital pass mode (connect your free NASA MAP_KEY for 100% live sensing)'
+      ? 'Standby mode (Proxy reached with 0 detections or transient timeout)'
+      : 'Reference pass mode (Connect FIRMS_MAP_KEY for 100% live satellite sensing)'
   };
 
   memoryCache = refreshed;

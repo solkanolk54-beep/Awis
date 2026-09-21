@@ -39,6 +39,7 @@ import { AiAssistedDispatchPanel } from './AiAssistedDispatchPanel';
 import { StrategicDispatchPanel } from './StrategicDispatchPanel';
 import { DispatchedUnitsTimelineTab } from './DispatchedUnitsTimelineTab';
 import { ResourceDeploymentAdvisor } from './ResourceDeploymentAdvisor';
+import { FlameIntensityHeatmapBarGraph } from './FlameIntensityHeatmapBarGraph';
 import { computeDistanceKm, computeTravelTimeMinutes, evaluateOptimalUnits } from '../../services/aiDispatchEngine';
 
 interface IncidentDetailModalProps {
@@ -334,6 +335,13 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* D3 Flame Intensity Heat Map Bar Graph (Driven by Wind & Humidity) */}
+              <FlameIntensityHeatmapBarGraph
+                incident={incident}
+                currentLang={currentLang}
+                onOpenFullSimulation={onOpenBurnRateModeling ? () => onOpenBurnRateModeling(incident) : undefined}
+              />
 
               {/* Tactical Airborne Drone Reconnaissance Card */}
               <div 
@@ -948,6 +956,13 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {/* D3 Flame Intensity Heat Map Bar Graph */}
+              <FlameIntensityHeatmapBarGraph
+                incident={incident}
+                currentLang={currentLang}
+                onOpenFullSimulation={onOpenBurnRateModeling ? () => onOpenBurnRateModeling(incident) : undefined}
+              />
 
               {/* Isochrones Table */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
