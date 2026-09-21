@@ -415,3 +415,98 @@ export interface EvacuationPlanScenario {
   totalEvacuatedCount: number;
   advisoryStatus: 'monitoring' | 'voluntary_standby' | 'mandatory_immediate';
 }
+
+// ==========================================
+// AWIS Future Multi-Sensor Integration Models
+// ==========================================
+
+export interface MtgFciHotspotSignal {
+  id: string; // e.g. "MTG-FCI-DZ-20260921-1240"
+  timestampUtc: string;
+  scanRepeatCycle: number;
+  location: GeoCoordinates;
+  wilayaId: number;
+  wilayaNameAr: string;
+  spectralChannels: {
+    t38Kelvin: number;
+    t105Kelvin: number;
+    deltaTKelvin: number;
+  };
+  frpEstimatedMw: number;
+  pixelFootprintKm2: number;
+  cloudMaskStatus: 'clear' | 'partially_cloudy' | 'smoke_plume';
+  confidenceLevel: 'low' | 'nominal' | 'high';
+  isProcessedInCadence: boolean;
+}
+
+export interface SarRadarFirePerimeter {
+  id: string; // e.g. "SAR-S1-DZ-2026-0042"
+  orbitDirection: 'ASCENDING' | 'DESCENDING';
+  acquisitionTimestamp: string;
+  polarizationChannels: ['VV', 'VH'];
+  perimeterGeoJson: {
+    type: 'Polygon' | 'MultiPolygon';
+    coordinates: number[][][];
+  };
+  totalBurnScarAreaHa: number;
+  cloudPenetrationSuccess: true;
+  backscatterDifferenceDbMean: number;
+  confidenceMatrix: number[];
+  derivedFireFrontLine: {
+    type: 'LineString';
+    coordinates: number[][];
+    advancementBearingDeg: number;
+  };
+}
+
+export interface IotForestNodeTelemetry {
+  nodeId: string; // e.g. "LR-TEB-014"
+  gatewayId: string;
+  timestamp: string;
+  batteryMillivolts: number;
+  solarChargingCurrentMa: number;
+  rssi: number;
+  snr: number;
+  telemetry: {
+    gasCoPpm: number;
+    gasVocIndex: number;
+    ambientTempC: number;
+    ambientHumidityPercent: number;
+    pyrolysisProbability: number;
+  };
+  geoPosition: GeoCoordinates & {
+    altitudeMeters: number;
+    forestCompartment: string;
+    wilaya: string;
+  };
+  alarmState: 'NOMINAL' | 'PRE_FIRE_PYROLYSIS' | 'ACTIVE_COMBUSTION';
+}
+
+export interface DroneEdgeVisionTelemetry {
+  droneCallsign: string; // e.g. "DRONE-ALGER-ALPHA-02"
+  flightSessionId: string;
+  timestamp: string;
+  dronePosition: GeoCoordinates & {
+    altitudeAglMeters: number;
+    headingDeg: number;
+    gimbalPitchDeg: number;
+  };
+  visionDetections: {
+    fireFrontDetected: boolean;
+    flameCentroidGeo: GeoCoordinates;
+    flamePerimeterCoordinates: number[][];
+    measuredFlameHeightMeters: number;
+    peakRadiometricTempC: number;
+    smokeVectorDirectionDeg: number;
+    smokeVelocityMps: number;
+  };
+  streamUrls: {
+    thermalRtc: string;
+    rgbRtc: string;
+  };
+  feedHealth: {
+    fps: number;
+    latencyMs: number;
+    confidenceScorePercent: number;
+  };
+}
