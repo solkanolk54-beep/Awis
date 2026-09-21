@@ -114,6 +114,7 @@ import {
 } from '../../services/fireFrontPhysicsEngine';
 import { TerrainSteepnessOverlay } from './TerrainSteepnessOverlay';
 import { TerrainSteepnessHUD } from './TerrainSteepnessHUD';
+import { DroneMissionHUD } from './DroneMissionHUD';
 import { 
   generateRegionalSteepnessGrid, 
   CRITICAL_ESCARPMENT_ZONES, 
@@ -306,8 +307,17 @@ export const GISMap: React.FC<GISMapProps> = ({
   // Centralized Mutual-Exclusivity Tactical HUD Manager:
   // Guarantees that at most ONE tactical analytical HUD is displayed at any time,
   // completely preventing visual clutter and overlapping stacked panels ("المواد المتراكمة فوق بعضها").
-  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources';
+  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources' | 'drone';
   const [activeHUD, setActiveHUD] = useState<ActiveTacticalHUD>('none');
+
+  const showDroneHUD = activeHUD === 'drone';
+  const setShowDroneHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'drone';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'drone' : (isCurr ? 'none' : curr);
+    });
+  }, []);
 
   const showProjectionHUD = activeHUD === 'projection';
   const setShowProjectionHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
@@ -2007,6 +2017,35 @@ export const GISMap: React.FC<GISMapProps> = ({
             </button>
           </div>
 
+          {/* Tactical Airborne Drone Reconnaissance HUD Quick-Launch Pill */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-drone-recon-hud"
+              onClick={() => {
+                if (!layers.drones) {
+                  setLayers(prev => ({ ...prev, drones: true }));
+                }
+                setShowDroneHUD(!showDroneHUD);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                showDroneHUD
+                  ? 'bg-gradient-to-r from-emerald-600 to-emerald-700 text-white shadow ring-1 ring-emerald-400/60'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'شاشة استطلاع الدرون التكتيكية (بث حراري/بصري، كشف جبهة اللهب بالذكاء الاصطناعي، وتخزين دون اتصال)'
+                  : 'Tactical Drone Recon HUD (Thermal/Optical Stream, Edge AI Flame Front, Offline Snapshots)'
+              }
+            >
+              <Camera className={`w-3.5 h-3.5 ${showDroneHUD ? 'text-emerald-300 animate-pulse' : 'text-emerald-400'}`} />
+              <span>{currentLang === 'ar' ? 'استطلاع الدرون' : 'Drone HUD'}</span>
+              <span className="px-1.5 py-0.2 text-[9px] rounded-full font-mono font-bold bg-rose-600 text-white">
+                FLIR
+              </span>
+            </button>
+          </div>
+
           {/* Layer Controls Button */}
           <button
             onClick={() => setShowLayerPanel(!showLayerPanel)}
@@ -2515,8 +2554,8 @@ export const GISMap: React.FC<GISMapProps> = ({
               />
             </label>
 
-            <label className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 cursor-pointer bg-slate-800/30">
-              <span className="flex items-center gap-2 text-slate-300">
+            <div className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 bg-slate-800/30">
+              <label className="flex items-center gap-2 text-slate-300 cursor-pointer flex-1">
                 <Camera className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="flex items-center gap-1.5">
                   <span>{currentLang === 'ar' ? 'استطلاع الدرون (كاميرا حرارية/RGB)' : 'Drone Recon (Thermal/RGB Feed)'}</span>
@@ -2524,14 +2563,24 @@ export const GISMap: React.FC<GISMapProps> = ({
                     {activeDroneMission.cameraMode === 'thermal' ? 'FLIR' : 'RGB'}
                   </span>
                 </span>
-              </span>
-              <input 
-                type="checkbox" 
-                checked={layers.drones} 
-                onChange={() => toggleLayer('drones')} 
-                className="rounded accent-emerald-500"
-              />
-            </label>
+                <input 
+                  type="checkbox" 
+                  checked={layers.drones} 
+                  onChange={() => toggleLayer('drones')} 
+                  className="rounded accent-emerald-500 ml-auto mr-2"
+                />
+              </label>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDroneHUD(true);
+                }}
+                className="px-2 py-0.5 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-[10px] font-mono font-bold transition cursor-pointer"
+                title="Launch Drone Mission HUD"
+              >
+                HUD
+              </button>
+            </div>
 
             {/* Smart Evacuation Planner Layer Toggle */}
             <label className="flex items-center justify-between p-1.5 rounded hover:bg-slate-800/60 cursor-pointer bg-emerald-950/20 border border-emerald-500/20">
@@ -4137,7 +4186,15 @@ export const GISMap: React.FC<GISMapProps> = ({
             const isThermal = activeDroneMission.cameraMode === 'thermal';
 
             return (
-              <g id="drone-recon-tactical-overlay" className="cursor-pointer" onClick={() => onOpenDroneSimulation?.(dronePatrolIncident)}>
+              <g 
+                id="drone-recon-tactical-overlay" 
+                className="cursor-pointer" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDroneHUD(true);
+                  onOpenDroneSimulation?.(dronePatrolIncident);
+                }}
+              >
                 {/* 1. Camera FOV Sensor Projection Beam */}
                 <polygon
                   points={`${dronePt.x},${dronePt.y} ${firePt.x - 38},${firePt.y - 26} ${firePt.x + 38},${firePt.y + 26}`}
@@ -5406,6 +5463,26 @@ export const GISMap: React.FC<GISMapProps> = ({
             setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
           }}
         />
+      )}
+
+      {/* Tactical Airborne Drone Reconnaissance Mission HUD */}
+      {showDroneHUD && (
+        <div className="absolute inset-0 z-30 p-2 sm:p-4 bg-black/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in">
+          <div className="w-full h-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl">
+            <DroneMissionHUD
+              incident={dronePatrolIncident}
+              droneMissionState={activeDroneMission}
+              onUpdateDroneMission={updateDroneMissionHandler}
+              currentLang={currentLang}
+              onClose={() => setShowDroneHUD(false)}
+              onSyncMapTarget={(coords) => {
+                const pt = geoToSvg(coords.lat, coords.lng);
+                setZoom(2.6);
+                setPan({ x: 500 - pt.x * 2.6, y: 325 - pt.y * 2.6 });
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* Terrain Steepness & Machinery Mobility Tactical HUD (DEM Analysis) */}

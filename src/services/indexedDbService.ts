@@ -15,7 +15,7 @@ import {
 import { LiveWeatherData } from './liveWeatherService';
 
 export const DB_NAME = 'awis_tactical_db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORES = {
   INCIDENTS: 'incidents',
@@ -23,7 +23,8 @@ export const STORES = {
   WATER_POINTS: 'waterPoints',
   RESOURCES: 'resources',
   QUEUED_REPORTS: 'queuedReports',
-  APP_META: 'appMeta'
+  APP_META: 'appMeta',
+  DRONE_SNAPSHOTS: 'drone_tactical_snapshots'
 } as const;
 
 export interface IDBQueuedReport {
@@ -111,6 +112,14 @@ export function getTacticalDB(): Promise<IDBDatabase> {
         // 6. Tactical App Metadata & Global GIS Signals
         if (!db.objectStoreNames.contains(STORES.APP_META)) {
           db.createObjectStore(STORES.APP_META, { keyPath: 'key' });
+        }
+
+        // 7. Drone Tactical Snapshots Store (Offline frame & telemetry capture)
+        if (!db.objectStoreNames.contains(STORES.DRONE_SNAPSHOTS)) {
+          const droneStore = db.createObjectStore(STORES.DRONE_SNAPSHOTS, { keyPath: 'id' });
+          droneStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+          droneStore.createIndex('by_incident', 'incidentId', { unique: false });
+          droneStore.createIndex('by_drone', 'droneCallsign', { unique: false });
         }
 
         console.info('[AWIS Tactical IDB] Schema upgraded to version', DB_VERSION);
@@ -538,4 +547,104 @@ export async function loadCachedHotspotsIDB<T>(): Promise<T[] | null> {
     return null;
   }
 }
+
+export interface DroneTacticalSnapshot {
+  id: string;
+  timestamp: string;
+  incidentId: string;
+  droneCallsign: string;
+  cameraMode: 'thermal' | 'rgb' | 'optical';
+  thermalPalette?: string;
+  dataUrl: string; // Base64 encoded snapshot JPEG / PNG
+  telemetry: {
+    altitudeAglMeters: number;
+    groundSpeedKmh: number;
+    gimbalPitchDeg: number;
+    gimbalRollDeg?: number;
+    gimbalYawDeg?: number;
+    headingDeg: number;
+    batteryPercent: number;
+    signalPercent: number;
+    peakRadiometricTempC: number;
+    flameHeightMeters: number;
+    confidenceScorePercent: number;
+    fireFrontDetected: boolean;
+    streamProtocol: string;
+    coordinates: {
+      lat: number;
+      lng: number;
+    };
+  };
+}
+
+/**
+ * Saves a tactical drone camera snapshot frame with complete telemetry to IndexedDB
+ */
+export async function saveDroneSnapshotIDB(snapshot: DroneTacticalSnapshot): Promise<void> {
+  const db = await getTacticalDB();
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(STORES.DRONE_SNAPSHOTS, 'readwrite');
+      const store = tx.objectStore(STORES.DRONE_SNAPSHOTS);
+      const req = store.put(snapshot);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error || new Error('Failed to save drone snapshot to IDB'));
+      tx.onerror = () => reject(tx.error);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Retrieves all stored drone tactical snapshots from IndexedDB, ordered newest first
+ */
+export async function getDroneSnapshotsIDB(incidentId?: string): Promise<DroneTacticalSnapshot[]> {
+  try {
+    const db = await getTacticalDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORES.DRONE_SNAPSHOTS, 'readonly');
+        const store = tx.objectStore(STORES.DRONE_SNAPSHOTS);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          let list = (req.result || []) as DroneTacticalSnapshot[];
+          if (incidentId) {
+            list = list.filter((s) => s.incidentId === incidentId);
+          }
+          list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          resolve(list);
+        };
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Deletes a tactical snapshot by ID
+ */
+export async function deleteDroneSnapshotIDB(id: string): Promise<boolean> {
+  try {
+    const db = await getTacticalDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORES.DRONE_SNAPSHOTS, 'readwrite');
+        const store = tx.objectStore(STORES.DRONE_SNAPSHOTS);
+        const req = store.delete(id);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 
