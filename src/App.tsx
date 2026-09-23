@@ -33,7 +33,7 @@ import { NationalAnalyticsModal } from './components/analytics/NationalAnalytics
 import { PostFireReportModal } from './components/reports/PostFireReportModal';
 import { DroneViewSimulationModal } from './components/simulation/DroneViewSimulationModal';
 import { PredictiveBurnRateModal } from './components/simulation/PredictiveBurnRateModal';
-import { computeDroneTacticalAssessment } from './services/droneReconService';
+import { computeDroneTacticalAssessment, getDroneEdgeVisionTelemetry } from './services/droneReconService';
 import { translations } from './i18n/translations';
 import { fetchLiveWeather, LiveWeatherData } from './services/liveWeatherService';
 import { 
@@ -1037,6 +1037,7 @@ function AppContent() {
           onOpenDroneSimulation={(inc) => handleOpenDroneSimulation(inc)}
           onOpenBurnRateModeling={(inc) => handleOpenBurnRateModeling(inc)}
           onOpenEvacuationAlert={(inc) => handleOpenEvacuationAlert(inc)}
+          liveDroneData={getDroneEdgeVisionTelemetry(selectedIncident)}
         />
       )}
 

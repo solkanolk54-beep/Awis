@@ -10,12 +10,13 @@ import {
   ForestZone, 
   WaterPoint, 
   EmergencyResource, 
-  DetectionSignal 
+  DetectionSignal,
+  AlsatNdviPassData
 } from '../types';
 import { LiveWeatherData } from './liveWeatherService';
 
 export const DB_NAME = 'awis_tactical_db';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORES = {
   INCIDENTS: 'incidents',
@@ -24,7 +25,8 @@ export const STORES = {
   RESOURCES: 'resources',
   QUEUED_REPORTS: 'queuedReports',
   APP_META: 'appMeta',
-  DRONE_SNAPSHOTS: 'drone_tactical_snapshots'
+  DRONE_SNAPSHOTS: 'drone_tactical_snapshots',
+  ALSAT_COVERAGE: 'alsat_coverage'
 } as const;
 
 export interface IDBQueuedReport {
@@ -120,6 +122,14 @@ export function getTacticalDB(): Promise<IDBDatabase> {
           droneStore.createIndex('by_timestamp', 'timestamp', { unique: false });
           droneStore.createIndex('by_incident', 'incidentId', { unique: false });
           droneStore.createIndex('by_drone', 'droneCallsign', { unique: false });
+        }
+
+        // 8. ALSAT Satellite Coverage & Offline NDVI Imagery Cache Store
+        if (!db.objectStoreNames.contains(STORES.ALSAT_COVERAGE)) {
+          const alsatStore = db.createObjectStore(STORES.ALSAT_COVERAGE, { keyPath: 'id' });
+          alsatStore.createIndex('by_satellite', 'satelliteId', { unique: false });
+          alsatStore.createIndex('by_wilaya', 'wilayaTarget', { unique: false });
+          alsatStore.createIndex('by_timestamp', 'timestampSaved', { unique: false });
         }
 
         console.info('[AWIS Tactical IDB] Schema upgraded to version', DB_VERSION);
@@ -635,6 +645,85 @@ export async function deleteDroneSnapshotIDB(id: string): Promise<boolean> {
       try {
         const tx = db.transaction(STORES.DRONE_SNAPSHOTS, 'readwrite');
         const store = tx.objectStore(STORES.DRONE_SNAPSHOTS);
+        const req = store.delete(id);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Saves or updates an ALSAT satellite NDVI coverage footprint in IndexedDB for offline GIS display
+ */
+export async function saveAlsatPassIDB(passData: AlsatNdviPassData): Promise<boolean> {
+  try {
+    const db = await getTacticalDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORES.ALSAT_COVERAGE, 'readwrite');
+        const store = tx.objectStore(STORES.ALSAT_COVERAGE);
+        const record: AlsatNdviPassData = {
+          ...passData,
+          cachedInIndexedDb: true,
+          timestampSaved: new Date().toISOString()
+        };
+        const req = store.put(record);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch (err) {
+        console.warn('[AWIS IDB] saveAlsatPassIDB error:', err);
+        resolve(false);
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Retrieves all stored ALSAT satellite passes from IndexedDB, ordered newest first
+ */
+export async function getAlsatPassesIDB(satelliteId?: string): Promise<AlsatNdviPassData[]> {
+  try {
+    const db = await getTacticalDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORES.ALSAT_COVERAGE, 'readonly');
+        const store = tx.objectStore(STORES.ALSAT_COVERAGE);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          let list = (req.result || []) as AlsatNdviPassData[];
+          if (satelliteId) {
+            list = list.filter(p => p.satelliteId === satelliteId);
+          }
+          list.sort((a, b) => new Date(b.timestampSaved || b.acquisitionDate).getTime() - new Date(a.timestampSaved || a.acquisitionDate).getTime());
+          resolve(list);
+        };
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Deletes an ALSAT cached pass by ID
+ */
+export async function deleteAlsatPassIDB(id: string): Promise<boolean> {
+  try {
+    const db = await getTacticalDB();
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORES.ALSAT_COVERAGE, 'readwrite');
+        const store = tx.objectStore(STORES.ALSAT_COVERAGE);
         const req = store.delete(id);
         req.onsuccess = () => resolve(true);
         req.onerror = () => resolve(false);

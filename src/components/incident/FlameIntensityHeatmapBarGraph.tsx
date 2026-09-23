@@ -14,14 +14,25 @@ import {
   CheckCircle2,
   TrendingUp,
   ShieldAlert,
-  BarChart3
+  BarChart3,
+  Camera,
+  Cpu,
+  Radio,
+  RadioTower,
+  Send,
+  FileDown,
+  Video
 } from 'lucide-react';
-import { WildfireIncident, Language } from '../../types';
+import { WildfireIncident, Language, DroneEdgeVisionTelemetry } from '../../types';
+import { dispatchCellBroadcastAlert, CellBroadcastDispatchResult } from '../../services/cellBroadcastService';
+import { generateExecutiveIncidentReport } from '../../services/incidentReportGenerator';
 
 interface FlameIntensityHeatmapBarGraphProps {
   incident: WildfireIncident;
   currentLang: Language;
   onOpenFullSimulation?: () => void;
+  liveDroneData?: DroneEdgeVisionTelemetry;
+  onOpenLiveDroneStream?: () => void;
 }
 
 interface ProjectionTimeStep {
@@ -94,10 +105,26 @@ export function getFlameIntensityColor(intensityKwM: number): {
 export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGraphProps> = ({
   incident,
   currentLang,
-  onOpenFullSimulation
+  onOpenFullSimulation,
+  liveDroneData,
+  onOpenLiveDroneStream
 }) => {
   const isAr = currentLang === 'ar';
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Cell Broadcast State
+  const [isDispatchingAlert, setIsDispatchingAlert] = useState(false);
+  const [lastDispatchedAlert, setLastDispatchedAlert] = useState<CellBroadcastDispatchResult | null>(null);
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfSuccessMessage, setPdfSuccessMessage] = useState(false);
+
+  // Check if live drone telemetry is available and calibrated
+  const isDroneLive = Boolean(
+    liveDroneData && 
+    liveDroneData.visionDetections && 
+    (liveDroneData.visionDetections.measuredFlameHeightMeters > 0 || liveDroneData.visionDetections.peakRadiometricTempC > 0)
+  );
 
   // Dynamic simulation parameters initialized with incident telemetry
   const [windSpeed, setWindSpeed] = useState<number>(incident.windSpeedKmH || 32);
@@ -126,6 +153,7 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
   };
 
   // Physical Rothermel & Byram Fire Growth Computation based on wind & humidity
+  // OVERRIDE DIRECTIVE: When isDroneLive is true, measured drone telemetry overrides theoretical models
   const timeSteps = useMemo<ProjectionTimeStep[]>(() => {
     const initialArea = Math.max(0.5, incident.estimatedBurnedHectares || 5);
     const slope = incident.terrainSlopeDegrees || 20;
@@ -146,14 +174,32 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
     const slopeMultiplier = 1.0 + 5.275 * Math.pow(Math.tan(slopeRad), 2) * 0.5 + Math.sin(slopeRad) * 0.85;
 
     // 4. Baseline forward spread speed
-    const baseRateMMin = 3.4 * fuelDamping * windMultiplier * slopeMultiplier;
+    let baseRateMMin = 3.4 * fuelDamping * windMultiplier * slopeMultiplier;
+    
+    // If live drone telemetry measured smoke velocity or flame spread, adjust base rate
+    if (isDroneLive && liveDroneData?.visionDetections.smokeVelocityMps) {
+      const droneWindInfluence = 1 + (liveDroneData.visionDetections.smokeVelocityMps / 15);
+      baseRateMMin = baseRateMMin * 0.7 + (baseRateMMin * droneWindInfluence * 0.3);
+    }
     const forwardSpeedKmH = (baseRateMMin * 60) / 1000;
 
     // Byram's Fireline Intensity (kW/m): I = H * w * R
-    const heatContent = 18800; // kJ/kg for Mediterranean pine/oak maquis
-    const fuelLoadKgM2 = 1.30;
-    const rosMps = baseRateMMin / 60;
-    const baseIntensityKwM = Math.round(heatContent * fuelLoadKgM2 * rosMps);
+    // When live drone data is present, invert Byram's formula from measured flame height or radiometric core temp:
+    // Theoretical Byram: L = 0.0775 * I^0.46 => I = (L / 0.0775)^(1 / 0.46)
+    let baseIntensityKwM: number;
+    if (isDroneLive && liveDroneData?.visionDetections.measuredFlameHeightMeters) {
+      const measuredHeight = liveDroneData.visionDetections.measuredFlameHeightMeters;
+      // Inverted Byram: I = (L / 0.0775)^2.174
+      const droneDerivedIntensity = Math.round(Math.pow(measuredHeight / 0.0775, 1 / 0.46));
+      // Calibrate with radiometric core temperature (Stefan-Boltzmann radiative proxy)
+      const coreTempFactor = liveDroneData.visionDetections.peakRadiometricTempC > 600 ? 1.25 : 1.0;
+      baseIntensityKwM = Math.round(droneDerivedIntensity * coreTempFactor);
+    } else {
+      const heatContent = 18800; // kJ/kg for Mediterranean pine/oak maquis
+      const fuelLoadKgM2 = 1.30;
+      const rosMps = baseRateMMin / 60;
+      baseIntensityKwM = Math.round(heatContent * fuelLoadKgM2 * rosMps);
+    }
 
     // Discrete key horizons to project over 24 hours
     const hours = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24];
@@ -180,8 +226,13 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
       const diurnalFactor = (h >= 4 && h <= 14) ? 1.15 : 0.92;
       const stepIntensityKwM = Math.round(baseIntensityKwM * diurnalFactor * (1 + 0.03 * Math.min(10, h)));
 
-      // Byram Flame Length: L = 0.0775 * I^0.46 (meters)
-      const flameLengthM = Number((0.0775 * Math.pow(stepIntensityKwM, 0.46)).toFixed(1));
+      // Byram Flame Length: L = 0.0775 * I^0.46 (meters) or calibrated with drone
+      let flameLengthM: number;
+      if (isDroneLive && liveDroneData?.visionDetections.measuredFlameHeightMeters && index === 0) {
+        flameLengthM = liveDroneData.visionDetections.measuredFlameHeightMeters;
+      } else {
+        flameLengthM = Number((0.0775 * Math.pow(stepIntensityKwM, 0.46)).toFixed(1));
+      }
 
       // Rating classification
       let containmentRating: ProjectionTimeStep['containmentRating'] = 'Moderate';
@@ -219,7 +270,7 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
         heatGradientId: `flame-gradient-step-${h}`
       };
     });
-  }, [incident, windSpeed, humidity, temperature]);
+  }, [incident, windSpeed, humidity, temperature, isDroneLive, liveDroneData]);
 
   // Overall summary metrics
   const maxIntensity = useMemo(() => {
@@ -519,18 +570,32 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
             <Flame className="w-5 h-5 animate-pulse" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-white tracking-wide flex items-center gap-1.5">
                 <span>{isAr ? 'مخطط شدة اللهب الحراري وتوسع الحريق (D3 Flame Intensity)' : 'D3 Flame Intensity Heat Map & Fire Growth'}</span>
               </h3>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40 uppercase">
                 D3 Physical Model
               </span>
+              {isDroneLive && (
+                <span 
+                  id="drone-self-calibrated-badge"
+                  className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.35)] flex items-center gap-1.5 animate-pulse"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <Camera className="w-3 h-3 text-emerald-300" />
+                  <span>{isAr ? 'معاير ذاتياً بكاميرا الدرون (Self-Calibrated)' : 'Self-Calibrated (Live Drone UAV)'}</span>
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              {isAr 
-                ? 'محاكاة ديناميكية لنمو رقعة الحريق وشدة طاقة اللهب خلال 24 ساعة حسب سرعة الرياح ورطوبة الغطاء النباتي.'
-                : 'Projects fire front expansion and Byram fireline intensity over 24h, driven by wind velocity and fuel moisture.'}
+              {isDroneLive 
+                ? (isAr 
+                    ? `تم ضبط نموذج بيرام وروثرميل بالقيم المقاسة فعلياً: ارتفاع اللهب (${liveDroneData?.visionDetections.measuredFlameHeightMeters}م) وحرارة الإشعاع (${liveDroneData?.visionDetections.peakRadiometricTempC}°C).` 
+                    : `Calibrated with real-time drone vision: flame height (${liveDroneData?.visionDetections.measuredFlameHeightMeters}m) & radiometric core temp (${liveDroneData?.visionDetections.peakRadiometricTempC}°C).`)
+                : (isAr 
+                    ? 'محاكاة ديناميكية لنمو رقعة الحريق وشدة طاقة اللهب خلال 24 ساعة حسب سرعة الرياح ورطوبة الغطاء النباتي.'
+                    : 'Projects fire front expansion and Byram fireline intensity over 24h, driven by wind velocity and fuel moisture.')}
             </p>
           </div>
         </div>
@@ -842,6 +907,222 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
           </button>
         )}
       </div>
+
+      {/* TACTICAL COMMAND BAR: G-04 EMERGENCY CELL BROADCAST & G-05 LIVE DRONE STREAM & SOVEREIGN PDF REPORT */}
+      <div 
+        id="flame-tactical-command-actions"
+        className="p-3 rounded-xl bg-gradient-to-r from-red-950/40 via-slate-900 to-emerald-950/30 border border-red-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-red-600/20 text-red-400 border border-red-500/40 shadow-inner">
+            <RadioTower className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-white uppercase font-mono tracking-wide">
+                {isAr ? 'منظومة الاستجابة والقيادة المركزية L3' : 'Command Tactical Response (L3)'}
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 font-bold">
+                G-04 / G-05 ACTIVATED
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {isAr 
+                ? 'إطلاق أوامر الإخلاء الخلوي الميداني CAP، متابعة تدفق كاميرات الدرون الحية، واستخراج التقرير السيادي الموثق.' 
+                : 'Broadcast instant CAP evacuation alerts via BTS towers, open live drone video player, and generate sovereign dossier.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Action 1: G-04 Early Evacuation Cell Broadcast Button */}
+          <button
+            id="flame-dispatch-cell-broadcast-btn"
+            onClick={async () => {
+              setIsDispatchingAlert(true);
+              try {
+                const res = await dispatchCellBroadcastAlert(incident);
+                setLastDispatchedAlert(res);
+                setShowAlertModal(true);
+              } catch (err) {
+                console.error('Cell broadcast dispatch error', err);
+              } finally {
+                setIsDispatchingAlert(false);
+              }
+            }}
+            disabled={isDispatchingAlert}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer shadow-lg shadow-red-950/50 border border-red-500/50 disabled:opacity-50"
+            title={isAr ? 'إصدار تنبيه إخلاء مبكر فوري عبر أبراج الاتصالات' : 'Issue immediate early evacuation cell broadcast alert'}
+          >
+            <Radio className={`w-4 h-4 ${isDispatchingAlert ? 'animate-spin' : 'animate-ping'}`} />
+            <span>
+              {isDispatchingAlert
+                ? (isAr ? 'جارٍ البث الخلوي...' : 'Broadcasting CAP Alert...')
+                : (isAr ? 'إصدار تنبيه إخلاء مبكر (Cell Broadcast)' : 'Issue Early Evacuation Alert')}
+            </span>
+            <span className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-black/40 text-rose-200">
+              CAP v1.2
+            </span>
+          </button>
+
+          {/* Action 2: G-05 Live Drone Stream Player Button */}
+          {onOpenLiveDroneStream && (
+            <button
+              id="flame-open-drone-stream-btn"
+              onClick={onOpenLiveDroneStream}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-950/50 border border-emerald-500/50"
+              title={isAr ? 'فتح النافذة الحية لبث فيديو كاميرات الدرون' : 'Open real-time drone RTSP / WebRTC video stream'}
+            >
+              <Video className="w-4 h-4 text-emerald-200 animate-pulse" />
+              <span>{isAr ? 'بث فيديو الدرون المباشر' : 'Drone Live Stream'}</span>
+              <span className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-black/40 text-emerald-200">
+                1080p
+              </span>
+            </button>
+          )}
+
+          {/* Action 3: Sovereign Executive Incident PDF Report Generator */}
+          <button
+            id="flame-generate-executive-report-btn"
+            onClick={() => {
+              setIsGeneratingPdf(true);
+              try {
+                generateExecutiveIncidentReport(
+                  {
+                    incident,
+                    droneTelemetry: liveDroneData,
+                    commandingOfficer: 'COLONEL B. MUSTAPHA (L3 COMMAND)',
+                    securityClassification: 'SECRET-DEFENSE // CONFIDENTIEL'
+                  },
+                  currentLang
+                );
+                setPdfSuccessMessage(true);
+                setTimeout(() => setPdfSuccessMessage(false), 4500);
+              } catch (err) {
+                console.error('Failed to generate sovereign PDF', err);
+              } finally {
+                setIsGeneratingPdf(false);
+              }
+            }}
+            disabled={isGeneratingPdf}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer border border-slate-700 shadow-md"
+            title={isAr ? 'توليد تقرير رسمي تكتيكي للقيادة العليا (PDF)' : 'Generate Sovereign Executive PDF Intelligence Report'}
+          >
+            <FileDown className="w-4 h-4 text-amber-400" />
+            <span>
+              {pdfSuccessMessage
+                ? (isAr ? '✓ تم تنزيل التقرير' : '✓ Dossier Downloaded')
+                : isGeneratingPdf
+                ? (isAr ? 'جارٍ الإنشاء...' : 'Generating PDF...')
+                : (isAr ? 'تقرير القيادة العليا (PDF)' : 'Sovereign PDF Report')}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* Dispatched Cell Broadcast Result Modal / Overlay */}
+      {showAlertModal && lastDispatchedAlert && (
+        <div 
+          id="cell-broadcast-confirmation-overlay"
+          onClick={() => setShowAlertModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm cursor-pointer animate-in fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-xl bg-slate-900 border border-red-500 rounded-2xl shadow-2xl p-5 space-y-4 cursor-default text-slate-200"
+          >
+            <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500 flex items-center justify-center text-red-400">
+                  <RadioTower className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>{isAr ? 'تم إرسال بث الطوارئ الخلوي بنجاح (CAP v1.2)' : 'Emergency Cell Broadcast Dispatched'}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
+                      ACKNOWLEDGED
+                    </span>
+                  </h4>
+                  <span className="text-xs text-slate-400 font-mono">
+                    REF: {lastDispatchedAlert.dispatchId} | {new Date().toLocaleTimeString()}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAlertModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Broadcast Target Specs */}
+            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="text-slate-400">{isAr ? 'النطاق الجغرافي الخطر (Hazard Bounding Box):' : 'Hazard Bounding Box:'}</span>
+                <span className="font-mono text-amber-300 font-bold">
+                  {lastDispatchedAlert.hazardArea.minLat}°N - {lastDispatchedAlert.hazardArea.maxLat}°N
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="text-slate-400">{isAr ? 'الولاية والبلديات المستهدفة:' : 'Targeted Wilaya & Communes:'}</span>
+                <span className="font-bold text-white">
+                  {isAr ? lastDispatchedAlert.targetWilayaAr : lastDispatchedAlert.targetWilaya} ({lastDispatchedAlert.affectedCommunes.join(', ')})
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="text-slate-400">{isAr ? 'السكان المتوقع استقبالهم للإنذار:' : 'Estimated Affected Population:'}</span>
+                <span className="font-mono text-red-400 font-black text-sm">
+                  ~{lastDispatchedAlert.totalEstimatedRecipients.toLocaleString()} {isAr ? 'مواطن' : 'Citizens'}
+                </span>
+              </div>
+            </div>
+
+            {/* Telecom Providers Handshake Status */}
+            <div>
+              <span className="text-xs font-bold text-slate-300 block mb-2">
+                {isAr ? 'حالة أبراج الاتصالات المتعاملة (Telecom BTS Relays):' : 'Telecom Operators Relay Status:'}
+              </span>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {lastDispatchedAlert.telecomProviders.map((provider) => (
+                  <div key={provider.provider} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-center">
+                    <span className="font-bold text-white block">{provider.provider}</span>
+                    <span className="text-[10px] text-emerald-400 font-mono font-bold block mt-0.5">
+                      ✓ {provider.towersAlerted} BTS Towers
+                    </span>
+                    <span className="text-[9px] text-slate-400 font-mono block">
+                      ~{provider.subscribersReachedEstimated.toLocaleString()} Users ({provider.latencyMs}ms)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* CAP Alert Text Content */}
+            <div className="p-3 rounded-lg bg-red-950/30 border border-red-500/40 text-xs space-y-1">
+              <div className="font-bold text-red-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <span>{isAr ? lastDispatchedAlert.capAlertMessage.titleAr : lastDispatchedAlert.capAlertMessage.titleEn}</span>
+              </div>
+              <p className="text-slate-300 leading-relaxed">
+                {isAr ? lastDispatchedAlert.capAlertMessage.bodyAr : lastDispatchedAlert.capAlertMessage.bodyEn}
+              </p>
+              <p className="text-amber-300 font-bold text-[11px] pt-1">
+                {isAr ? lastDispatchedAlert.capAlertMessage.instructionAr : lastDispatchedAlert.capAlertMessage.instructionEn}
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowAlertModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer"
+              >
+                {isAr ? 'إغلاق نافذة التأكيد' : 'Dismiss Confirmation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Byram Heat Map Color Scale Legend Strip */}
       <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-slate-400">

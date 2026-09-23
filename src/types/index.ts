@@ -510,3 +510,87 @@ export interface DroneEdgeVisionTelemetry {
     confidenceScorePercent: number;
   };
 }
+
+// ==========================================
+// ASAL (Algerian Space Agency) ALSAT Fleet Models
+// ==========================================
+
+export type AlsatSatelliteId = 'ALSAT-1B' | 'ALSAT-2A' | 'ALSAT-2B';
+
+export interface AlsatTleData {
+  satelliteId: AlsatSatelliteId;
+  name: string;
+  nameAr: string;
+  line1: string;
+  line2: string;
+  noradId: number;
+  epochYear: number;
+  epochDay: number;
+  inclinationDeg: number;
+  raanDeg: number;
+  eccentricity: number;
+  argOfPerigeeDeg: number;
+  meanAnomalyDeg: number;
+  meanMotionRevsPerDay: number;
+  periodMinutes: number;
+  altitudeKm: number;
+  sensorResolutionMeters: number;
+  swathWidthKm: number;
+  spectralBands: string[];
+  missionRoleEn: string;
+  missionRoleAr: string;
+  lastUpdatedUtc: string;
+}
+
+export interface AlsatRealtimePosition {
+  satelliteId: AlsatSatelliteId;
+  latitude: number;
+  longitude: number;
+  altitudeKm: number;
+  velocityKmS: number;
+  groundFootprintRadiusKm: number;
+  isOverAlgeria: boolean;
+  nextAlgeriaPassUtc: string;
+  subSatellitePoint: GeoCoordinates;
+  footprintPolygon: GeoCoordinates[];
+  timestampUtc: string;
+}
+
+export interface AlsatOrbitalTrack {
+  satelliteId: AlsatSatelliteId;
+  pastTrack: GeoCoordinates[];
+  currentPosition: GeoCoordinates;
+  futureTrack: GeoCoordinates[];
+  swathCorridor: GeoCoordinates[];
+}
+
+export interface AlsatNdviPassData {
+  id: string;
+  satelliteId: AlsatSatelliteId;
+  acquisitionDate: string;
+  cloudCoverPercent: number;
+  wilayaTarget: string;
+  wilayaTargetAr: string;
+  bounds: {
+    minLat: number;
+    maxLat: number;
+    minLng: number;
+    maxLng: number;
+  };
+  ndviStats: {
+    minNdvi: number;
+    maxNdvi: number;
+    meanNdvi: number;
+    droughtSeverityIndex: 'Severe' | 'Moderate' | 'Normal' | 'Lush';
+    droughtSeverityIndexAr: string;
+  };
+  wmsLayerUrl: string;
+  wmtsTileUrlTemplate: string;
+  bandsUsed: {
+    red: string;
+    nir: string;
+  };
+  resolutionM: number;
+  cachedInIndexedDb: boolean;
+  timestampSaved: string;
+}

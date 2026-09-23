@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { firmsProxyRouter } from './api/firms-proxy';
+import { alsatProxyRouter } from './api/alsat-proxy';
 
 // Load local environment variables (.env / secrets)
 dotenv.config();
@@ -24,6 +25,9 @@ async function startServer() {
 
   // G-03: NASA FIRMS Thermal Hotspots Secure Proxy Gateway
   app.use('/api/firms', firmsProxyRouter);
+
+  // ASAL: Algerian Space Agency ALSAT Satellite Fleet & WMS/WMTS Gateway
+  app.use('/api/alsat', alsatProxyRouter);
 
   // Vite middleware for development; static assets for production
   if (process.env.NODE_ENV !== 'production') {

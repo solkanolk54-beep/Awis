@@ -668,18 +668,105 @@ export const INITIAL_INCIDENTS: WildfireIncident[] = [
       {
         id: 'SIG-10',
         source: 'thermal_drone',
-        sourceName: 'Civil Protection Drone DZ-02',
+        sourceName: 'Civil Protection Drone DZ-02 (UAV FLIR)',
         timestamp: '11:18:00',
         confidence: 98,
         location: { lat: 36.731, lng: 4.412 },
-        details: 'Active crown fire front with flame heights exceeding 8 meters',
+        details: 'Active crown fire front with flame heights exceeding 8.4 meters, peak core temp 720°C',
         sensorMetadata: {
-          thermalAnomalyMw: 410
+          thermalAnomalyMw: 410,
+          temperatureReading: 720
+        }
+      },
+      {
+        id: 'SIG-11',
+        source: 'satellite_firms',
+        sourceName: 'ALSAT-2A / NASA VIIRS Hotspot Ingestion',
+        timestamp: '11:16:30',
+        confidence: 97,
+        location: { lat: 36.732, lng: 4.414 },
+        details: 'High-energy radiant core 410 MW detected near Yakouren ridge top',
+        sensorMetadata: {
+          thermalAnomalyMw: 410,
+          temperatureReading: 680
         }
       }
     ],
-    spreadPredictions: [],
-    exposedAssets: [],
+    spreadPredictions: [
+      {
+        timeHorizonMinutes: 30,
+        areaHectares: 26.5,
+        probability: 93,
+        frontSpeedKmH: 2.1,
+        perimeterPoints: [
+          { lat: 36.730, lng: 4.410 },
+          { lat: 36.735, lng: 4.416 },
+          { lat: 36.738, lng: 4.421 },
+          { lat: 36.734, lng: 4.423 },
+          { lat: 36.729, lng: 4.418 }
+        ]
+      },
+      {
+        timeHorizonMinutes: 60,
+        areaHectares: 48.0,
+        probability: 86,
+        frontSpeedKmH: 2.6,
+        perimeterPoints: [
+          { lat: 36.728, lng: 4.408 },
+          { lat: 36.738, lng: 4.419 },
+          { lat: 36.744, lng: 4.428 },
+          { lat: 36.737, lng: 4.432 },
+          { lat: 36.726, lng: 4.420 }
+        ]
+      },
+      {
+        timeHorizonMinutes: 180,
+        areaHectares: 112.0,
+        probability: 75,
+        frontSpeedKmH: 3.2,
+        perimeterPoints: [
+          { lat: 36.724, lng: 4.405 },
+          { lat: 36.745, lng: 4.424 },
+          { lat: 36.758, lng: 4.442 },
+          { lat: 36.748, lng: 4.450 },
+          { lat: 36.722, lng: 4.425 }
+        ]
+      }
+    ],
+    exposedAssets: [
+      {
+        id: 'ASSET-TO-01',
+        name: 'Village Ait Aissi (Yakouren Massif)',
+        nameAr: 'قرية آيت عيسي - مرتفعات إعكوران',
+        type: 'village',
+        population: 2650,
+        distanceKm: 2.1,
+        estimatedWindowMinutes: '35–55 min',
+        evacuationStatus: 'advisory',
+        urgency: 'critical'
+      },
+      {
+        id: 'ASSET-TO-02',
+        name: 'Route Nationale RN-12 (Azazga Axis)',
+        nameAr: 'الطريق الوطني رقم 12 - محور عزازقة',
+        type: 'road',
+        distanceKm: 1.4,
+        estimatedWindowMinutes: '20–30 min',
+        evacuationStatus: 'monitoring',
+        urgency: 'critical'
+      },
+      {
+        id: 'ASSET-TO-03',
+        name: 'Yakouren Forest Hospital & Clinic',
+        nameAr: 'العيادة المتعددة الخدمات إعكوران',
+        type: 'hospital',
+        population: 85,
+        distanceKm: 3.8,
+        estimatedWindowMinutes: '60–90 min',
+        evacuationStatus: 'advisory',
+        urgency: 'moderate'
+      }
+    ],
     assignedResources: ['RES-02', 'RES-05'],
     timeline: [
       {

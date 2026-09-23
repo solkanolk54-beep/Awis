@@ -29,9 +29,11 @@ import {
   ChevronRight,
   Navigation,
   Route,
-  Lock
+  Lock,
+  Video,
+  FileDown
 } from 'lucide-react';
-import { WildfireIncident, EmergencyResource, Language } from '../../types';
+import { WildfireIncident, EmergencyResource, Language, DroneEdgeVisionTelemetry } from '../../types';
 import { translations } from '../../i18n/translations';
 import { useRBAC } from '../../context/RBACContext';
 import { ExplainableAiBreakdown } from './ExplainableAiBreakdown';
@@ -41,6 +43,8 @@ import { DispatchedUnitsTimelineTab } from './DispatchedUnitsTimelineTab';
 import { ResourceDeploymentAdvisor } from './ResourceDeploymentAdvisor';
 import { FlameIntensityHeatmapBarGraph } from './FlameIntensityHeatmapBarGraph';
 import { computeDistanceKm, computeTravelTimeMinutes, evaluateOptimalUnits } from '../../services/aiDispatchEngine';
+import { DroneLiveStreamModal } from '../gis/DroneLiveStreamModal';
+import { generateExecutiveIncidentReport } from '../../services/incidentReportGenerator';
 
 interface IncidentDetailModalProps {
   incident: WildfireIncident;
@@ -53,6 +57,7 @@ interface IncidentDetailModalProps {
   onOpenDroneSimulation?: (incident: WildfireIncident) => void;
   onOpenBurnRateModeling?: (incident: WildfireIncident) => void;
   onOpenEvacuationAlert?: (incident: WildfireIncident) => void;
+  liveDroneData?: DroneEdgeVisionTelemetry;
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
@@ -65,12 +70,14 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
   currentLang,
   onOpenDroneSimulation,
   onOpenBurnRateModeling,
-  onOpenEvacuationAlert
+  onOpenEvacuationAlert,
+  liveDroneData
 }) => {
   const t = translations[currentLang];
   const [activeTab, setActiveTab] = useState<'overview' | 'advisor' | 'dispatched-timeline' | 'strategic-dispatch' | 'dispatch' | 'xai' | 'detection' | 'spread' | 'validation'>('overview');
   const [expertNote, setExpertNote] = useState('');
   const [actionSuccessMessage, setActionSuccessMessage] = useState('');
+  const [showLiveStreamModal, setShowLiveStreamModal] = useState(false);
 
   const dispatchedUnitsCount = incident.assignedResources.length;
 
@@ -189,6 +196,40 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
               <span>{currentLang === 'ar' ? 'استطلاع الدرون' : 'Drone Recon'}</span>
               <span className="px-1.5 py-0.2 rounded bg-black/30 text-emerald-200 text-[10px] font-mono font-bold">
                 FLIR/RGB
+              </span>
+            </button>
+            <button
+              id="header-drone-live-stream-btn"
+              onClick={() => setShowLiveStreamModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-700 hover:from-teal-500 hover:to-emerald-600 text-white font-bold text-xs shadow-md shadow-teal-950/40 transition cursor-pointer"
+              title="Open Real-Time RTSP / WebRTC Drone Video Player (G-05)"
+            >
+              <Video className="w-3.5 h-3.5 text-emerald-200 animate-pulse" />
+              <span>{currentLang === 'ar' ? 'البث الحي (G-05)' : 'Live Video'}</span>
+              <span className="px-1.5 py-0.2 rounded bg-black/40 text-emerald-300 text-[10px] font-mono font-bold">
+                RTSP
+              </span>
+            </button>
+            <button
+              id="header-export-pdf-report-btn"
+              onClick={() => {
+                generateExecutiveIncidentReport(
+                  {
+                    incident,
+                    droneTelemetry: liveDroneData,
+                    commandingOfficer: 'General Directorate of Civil Protection (DGPC)',
+                    securityClassification: 'SECRET-DEFENSE // CONFIDENTIEL'
+                  },
+                  currentLang
+                );
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-bold text-xs shadow-md shadow-purple-950/40 transition cursor-pointer"
+              title="Download Sovereign Executive PDF Intelligence Report (DGPC & CNS)"
+            >
+              <FileDown className="w-3.5 h-3.5 text-purple-200" />
+              <span>{currentLang === 'ar' ? 'تقرير القيادة (PDF)' : 'Executive PDF'}</span>
+              <span className="px-1.5 py-0.2 rounded bg-black/40 text-purple-300 text-[10px] font-mono font-bold">
+                L3
               </span>
             </button>
             <button
@@ -341,6 +382,8 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
                 incident={incident}
                 currentLang={currentLang}
                 onOpenFullSimulation={onOpenBurnRateModeling ? () => onOpenBurnRateModeling(incident) : undefined}
+                liveDroneData={liveDroneData}
+                onOpenLiveDroneStream={() => setShowLiveStreamModal(true)}
               />
 
               {/* Tactical Airborne Drone Reconnaissance Card */}
@@ -1219,6 +1262,17 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* G-05: Real-Time RTSP / WebRTC Drone Video Player Modal */}
+      {showLiveStreamModal && (
+        <DroneLiveStreamModal
+          isOpen={showLiveStreamModal}
+          onClose={() => setShowLiveStreamModal(false)}
+          incident={incident}
+          liveDroneData={liveDroneData}
+          currentLang={currentLang}
+        />
+      )}
     </div>
   );
 };

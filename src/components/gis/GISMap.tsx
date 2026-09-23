@@ -115,6 +115,21 @@ import {
 import { TerrainSteepnessOverlay } from './TerrainSteepnessOverlay';
 import { TerrainSteepnessHUD } from './TerrainSteepnessHUD';
 import { DroneMissionHUD } from './DroneMissionHUD';
+import { AlsatFleetOverlay } from './AlsatFleetOverlay';
+import { AlsatFleetHUD } from './AlsatFleetHUD';
+import { 
+  fetchAlsatFleetPositions, 
+  computeAlsatPositionAtTime,
+  computeAlsatOrbitalTrack, 
+  fetchAlsatPasses, 
+  initializeAlsatOfflineStorage 
+} from '../../services/alsatTrackingService';
+import { 
+  AlsatSatelliteId, 
+  AlsatRealtimePosition, 
+  AlsatOrbitalTrack, 
+  AlsatNdviPassData 
+} from '../../types';
 import { 
   generateRegionalSteepnessGrid, 
   CRITICAL_ESCARPMENT_ZONES, 
@@ -301,13 +316,14 @@ export const GISMap: React.FC<GISMapProps> = ({
     evacuationPlanner: false, // Toggleable Smart Evacuation Planner & Safe Corridors Layer
     physicalFireFront: false, // Toggleable Rothermel Physical Fire Front Simulation Layer
     fireFrontDynamics: false, // Toggleable Fire Front Dynamics Service & Active Expansion Edge Polyline
-    terrainSteepnessHeatmap: false // Toggleable Terrain Steepness & Firefighting Machinery Mobility Heatmap Layer (DEM)
+    terrainSteepnessHeatmap: false, // Toggleable Terrain Steepness & Firefighting Machinery Mobility Heatmap Layer (DEM)
+    alsatFleet: true // Toggleable Algerian Satellite Fleet (ALSAT-1B, ALSAT-2A, ALSAT-2B) Layer
   });
 
   // Centralized Mutual-Exclusivity Tactical HUD Manager:
   // Guarantees that at most ONE tactical analytical HUD is displayed at any time,
   // completely preventing visual clutter and overlapping stacked panels ("المواد المتراكمة فوق بعضها").
-  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources' | 'drone';
+  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources' | 'drone' | 'alsat';
   const [activeHUD, setActiveHUD] = useState<ActiveTacticalHUD>('none');
 
   const showDroneHUD = activeHUD === 'drone';
@@ -379,6 +395,15 @@ export const GISMap: React.FC<GISMapProps> = ({
       const isCurr = curr === 'resources';
       const next = typeof action === 'function' ? action(isCurr) : action;
       return next ? 'resources' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showAlsatHUD = activeHUD === 'alsat';
+  const setShowAlsatHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'alsat';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'alsat' : (isCurr ? 'none' : curr);
     });
   }, []);
 
@@ -764,6 +789,80 @@ export const GISMap: React.FC<GISMapProps> = ({
     }
   };
 
+  // --- Algerian Space Agency (ASAL) ALSAT Satellite Fleet Integration State ---
+  const [alsatPositions, setAlsatPositions] = useState<Record<AlsatSatelliteId, AlsatRealtimePosition>>(() => {
+    const now = new Date();
+    return {
+      'ALSAT-1B': computeAlsatPositionAtTime('ALSAT-1B', now),
+      'ALSAT-2A': computeAlsatPositionAtTime('ALSAT-2A', now),
+      'ALSAT-2B': computeAlsatPositionAtTime('ALSAT-2B', now)
+    };
+  });
+
+  const [alsatPasses, setAlsatPasses] = useState<AlsatNdviPassData[]>([]);
+  const [selectedAlsatSatellite, setSelectedAlsatSatellite] = useState<AlsatSatelliteId | 'ALL'>('ALL');
+  const [selectedAlsatPass, setSelectedAlsatPass] = useState<AlsatNdviPassData | null>(null);
+  const [showAlsatOrbitalTracks, setShowAlsatOrbitalTracks] = useState<boolean>(true);
+  const [showAlsatSwathCorridors, setShowAlsatSwathCorridors] = useState<boolean>(true);
+  const [showAlsatNdviFootprints, setShowAlsatNdviFootprints] = useState<boolean>(true);
+
+  // Compute instantaneous orbital tracks and swaths
+  const alsatTracks = useMemo<Record<AlsatSatelliteId, AlsatOrbitalTrack>>(() => {
+    const now = new Date();
+    return {
+      'ALSAT-1B': computeAlsatOrbitalTrack('ALSAT-1B', now),
+      'ALSAT-2A': computeAlsatOrbitalTrack('ALSAT-2A', now),
+      'ALSAT-2B': computeAlsatOrbitalTrack('ALSAT-2B', now)
+    };
+  }, []);
+
+  // Initialize offline IndexedDB passes and fetch realtime ALSAT positions
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAlsat() {
+      // 1. Initialize offline storage with default ASAL passes
+      const offlinePasses = await initializeAlsatOfflineStorage();
+      if (isMounted && offlinePasses && offlinePasses.length > 0) {
+        setAlsatPasses(offlinePasses);
+      }
+
+      // 2. Refresh passes from API proxy
+      const remotePasses = await fetchAlsatPasses();
+      if (isMounted && remotePasses && remotePasses.length > 0) {
+        setAlsatPasses(remotePasses);
+      }
+
+      // 3. Initial fleet positions
+      const positions = await fetchAlsatFleetPositions();
+      if (isMounted && positions) {
+        setAlsatPositions(positions);
+      }
+    }
+
+    initAlsat();
+
+    // Periodic telemetry update every 12 seconds
+    const interval = setInterval(async () => {
+      const positions = await fetchAlsatFleetPositions();
+      if (isMounted && positions) {
+        setAlsatPositions(positions);
+      }
+    }, 12000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleRefreshAlsatTelemetry = async () => {
+    const positions = await fetchAlsatFleetPositions();
+    if (positions) {
+      setAlsatPositions(positions);
+    }
+  };
+
   // Fire Spread Projection State (Dynamic Live Weather & Terrain Model)
   const [projectionHorizon, setProjectionHorizon] = useState<30 | 60 | 180 | 360 | 'all'>('all');
   const [projectionTargetMode, setProjectionTargetMode] = useState<'confirmed_active' | 'selected' | 'all'>('confirmed_active');
@@ -967,6 +1066,7 @@ export const GISMap: React.FC<GISMapProps> = ({
         if (layerKey === 'resourceHeatmap') setShowResourceHUD(false);
         if (layerKey === 'physicalFireFront') setShowFireFrontHUD(false);
         if (layerKey === 'terrainSteepnessHeatmap') setShowSteepnessHUD(false);
+        if (layerKey === 'alsatFleet') setShowAlsatHUD(false);
       } else {
         if (layerKey === 'spreadIsochrones') setShowProjectionHUD(true);
         if (layerKey === 'evacuationPlanner') setShowEvacHUD(true);
@@ -995,6 +1095,7 @@ export const GISMap: React.FC<GISMapProps> = ({
     isSatelliteModalOpen ||
     showNdviControl ||
     showHeatmapControl ||
+    showAlsatHUD ||
     (showClusterInspector && selectedClusterZone)
   );
   const isAnyModalActive = Boolean(isModalActiveProp || isInternalModalActive);
@@ -1004,8 +1105,9 @@ export const GISMap: React.FC<GISMapProps> = ({
     if (showNdviControl) setShowNdviControl(false);
     if (showHeatmapControl) setShowHeatmapControl(false);
     if (showClusterInspector) setShowClusterInspector(false);
+    if (showAlsatHUD) setShowAlsatHUD(false);
     if (onDismissModal) onDismissModal();
-  }, [isSatelliteModalOpen, showNdviControl, showHeatmapControl, showClusterInspector, onDismissModal]);
+  }, [isSatelliteModalOpen, showNdviControl, showHeatmapControl, showClusterInspector, showAlsatHUD, setShowAlsatHUD, onDismissModal]);
 
   // Dismiss active modal on ESC key press
   useEffect(() => {
@@ -2046,6 +2148,35 @@ export const GISMap: React.FC<GISMapProps> = ({
             </button>
           </div>
 
+          {/* ASAL ALSAT Fleet Integration HUD Quick-Launch Pill */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-alsat-fleet-hud"
+              onClick={() => {
+                if (!layers.alsatFleet) {
+                  setLayers(prev => ({ ...prev, alsatFleet: true }));
+                }
+                setShowAlsatHUD(!showAlsatHUD);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                showAlsatHUD
+                  ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow ring-1 ring-teal-400/60'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'منظومة الأقمار الصناعية الجزائرية: تتبع المدارات اللحظية، بصمات NDVI، والتخزين المحلي في وضع الأوفلاين'
+                  : 'Algerian Space Agency (ASAL) Satellite Fleet: Orbital tracks, NDVI footprints, and offline sync'
+              }
+            >
+              <Satellite className={`w-3.5 h-3.5 ${showAlsatHUD ? 'text-teal-300 animate-pulse' : 'text-teal-400'}`} />
+              <span>{currentLang === 'ar' ? 'أقمار ALSAT' : 'ALSAT Fleet'}</span>
+              <span className="px-1.5 py-0.2 text-[9px] rounded-full font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                ASAL
+              </span>
+            </button>
+          </div>
+
           {/* Layer Controls Button */}
           <button
             onClick={() => setShowLayerPanel(!showLayerPanel)}
@@ -2496,6 +2627,88 @@ export const GISMap: React.FC<GISMapProps> = ({
                       className="text-amber-400 hover:text-amber-200 underline font-mono text-[9px] cursor-pointer"
                     >
                       {currentLang === 'ar' ? 'فتح لوحة التحليل' : 'Open HUD'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Algerian Space Agency (ASAL) ALSAT Fleet Integration Layer Control */}
+            <div className="p-2 rounded bg-teal-950/20 border border-teal-800/40 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                  <Satellite className="w-3.5 h-3.5 text-teal-400" />
+                  <span className="flex flex-col">
+                    <span className="font-semibold text-teal-200">
+                      {currentLang === 'ar' ? 'كوكبة ALSAT الجزائرية' : 'ALSAT Satellite Fleet'}
+                    </span>
+                    <span className="text-[9px] text-teal-400/80 font-mono">
+                      {layers.alsatFleet 
+                        ? `${Object.values(alsatPositions).filter(p => p.isOverAlgeria).length}/3 Over Algeria • ${alsatPasses.length} Passes` 
+                        : 'OFF'}
+                    </span>
+                  </span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowAlsatHUD(true);
+                      setShowLayerPanel(false);
+                    }}
+                    className="p-1 text-teal-400 hover:text-white rounded hover:bg-teal-900/60 transition cursor-pointer"
+                    title={currentLang === 'ar' ? 'فتح لوحة تحكم أقمار ALSAT' : 'Open ALSAT Fleet HUD'}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  <input 
+                    type="checkbox" 
+                    id="layer-toggle-alsat-fleet"
+                    checked={layers.alsatFleet} 
+                    onChange={() => toggleLayer('alsatFleet')} 
+                    className="rounded accent-teal-500 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {layers.alsatFleet && (
+                <div className="pt-1 space-y-1.5 border-t border-teal-900/30 text-[10px]">
+                  <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded border border-slate-800">
+                    <button
+                      onClick={() => setShowAlsatOrbitalTracks(!showAlsatOrbitalTracks)}
+                      className={`flex-1 py-0.5 rounded font-mono font-bold transition cursor-pointer ${
+                        showAlsatOrbitalTracks ? 'bg-teal-700 text-white' : 'text-slate-500'
+                      }`}
+                    >
+                      Tracks
+                    </button>
+                    <button
+                      onClick={() => setShowAlsatSwathCorridors(!showAlsatSwathCorridors)}
+                      className={`flex-1 py-0.5 rounded font-mono font-bold transition cursor-pointer ${
+                        showAlsatSwathCorridors ? 'bg-teal-700 text-white' : 'text-slate-500'
+                      }`}
+                    >
+                      Swath
+                    </button>
+                    <button
+                      onClick={() => setShowAlsatNdviFootprints(!showAlsatNdviFootprints)}
+                      className={`flex-1 py-0.5 rounded font-mono font-bold transition cursor-pointer ${
+                        showAlsatNdviFootprints ? 'bg-emerald-700 text-white' : 'text-slate-500'
+                      }`}
+                    >
+                      NDVI
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-[9px] text-slate-400">
+                    <span className="font-mono text-teal-300 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-ping" />
+                      ALSAT-1B / 2A / 2B
+                    </span>
+                    <button
+                      onClick={() => setShowAlsatHUD(true)}
+                      className="text-teal-400 hover:text-teal-200 underline font-mono text-[9px] cursor-pointer"
+                    >
+                      {currentLang === 'ar' ? 'عرض التغطيات والأوفلاين' : 'Passes & Offline'}
                     </button>
                   </div>
                 </div>
@@ -4546,6 +4759,27 @@ export const GISMap: React.FC<GISMapProps> = ({
               onPinPermanent={handlePinPermanent}
             />
           )}
+
+          {/* 16. Algerian Space Agency (ASAL) ALSAT Fleet Overlay (Orbital Tracks, Swath Corridors, NDVI Footprints) */}
+          {layers.alsatFleet && (
+            <AlsatFleetOverlay
+              positions={alsatPositions}
+              tracks={alsatTracks}
+              passes={alsatPasses}
+              selectedSatellite={selectedAlsatSatellite}
+              selectedPassId={selectedAlsatPass?.id || null}
+              showTracks={showAlsatOrbitalTracks}
+              showSwaths={showAlsatSwathCorridors}
+              showFootprints={showAlsatNdviFootprints}
+              geoToSvg={geoToSvg}
+              onSelectSatellite={(satId) => setSelectedAlsatSatellite(satId)}
+              onSelectPass={(pass) => {
+                setSelectedAlsatPass(pass);
+                setShowAlsatHUD(true);
+              }}
+              currentLang={currentLang}
+            />
+          )}
         </g>
       </svg>
 
@@ -5510,6 +5744,39 @@ export const GISMap: React.FC<GISMapProps> = ({
           }}
           onClose={() => setShowSteepnessHUD(false)}
           currentLang={currentLang}
+        />
+      )}
+
+      {/* Algerian Space Agency (ASAL) ALSAT Fleet Command HUD */}
+      {showAlsatHUD && (
+        <AlsatFleetHUD
+          positions={alsatPositions}
+          passes={alsatPasses}
+          selectedSatellite={selectedAlsatSatellite}
+          onSelectSatellite={setSelectedAlsatSatellite}
+          selectedPassId={selectedAlsatPass?.id || null}
+          onSelectPass={(pass) => {
+            if (pass) {
+              setSelectedAlsatPass(pass);
+              const centerLat = (pass.bounds.minLat + pass.bounds.maxLat) / 2;
+              const centerLng = (pass.bounds.minLng + pass.bounds.maxLng) / 2;
+              const pt = geoToSvg(centerLat, centerLng);
+              setZoom(2.2);
+              setPan({ x: 500 - pt.x * 2.2, y: 325 - pt.y * 2.2 });
+            } else {
+              setSelectedAlsatPass(null);
+            }
+          }}
+          showTracks={showAlsatOrbitalTracks}
+          onToggleTracks={() => setShowAlsatOrbitalTracks(!showAlsatOrbitalTracks)}
+          showSwaths={showAlsatSwathCorridors}
+          onToggleSwaths={() => setShowAlsatSwathCorridors(!showAlsatSwathCorridors)}
+          showFootprints={showAlsatNdviFootprints}
+          onToggleFootprints={() => setShowAlsatNdviFootprints(!showAlsatNdviFootprints)}
+          onRefreshTelemetry={handleRefreshAlsatTelemetry}
+          onClose={() => setShowAlsatHUD(false)}
+          currentLang={currentLang}
+          isOnline={isOnline}
         />
       )}
 
