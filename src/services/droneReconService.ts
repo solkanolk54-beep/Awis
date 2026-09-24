@@ -253,3 +253,60 @@ export function getDroneEdgeVisionTelemetry(incident: WildfireIncident): import(
     }
   };
 }
+
+export interface TacticalDropCoordinates {
+  wgs84DMS: string;
+  wgs84Decimal: string;
+  utmGrid: string;
+  dropPoint: GeoCoordinates;
+  frpMw: number;
+  coreTempC: number;
+  recommendedRetardantLiters: number;
+  dispatchTimestamp: string;
+  targetSectorId: string;
+  airOpsRadioFrequency: string;
+}
+
+export function formatCoordinateDMS(val: number, isLat: boolean): string {
+  const dir = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
+  const abs = Math.abs(val);
+  const deg = Math.floor(abs);
+  const minFloat = (abs - deg) * 60;
+  const min = Math.floor(minFloat);
+  const sec = ((minFloat - min) * 60).toFixed(1);
+  return `${deg}°${min.toString().padStart(2, '0')}'${sec.padStart(4, '0')}"${dir}`;
+}
+
+export function computeTacticalDropCoordinates(
+  incident: WildfireIncident,
+  assessment: DroneTacticalAssessment
+): TacticalDropCoordinates {
+  const lat = assessment.recommendedDropPoint.lat;
+  const lng = assessment.recommendedDropPoint.lng;
+  const wgs84DMS = `${formatCoordinateDMS(lat, true)}, ${formatCoordinateDMS(lng, false)}`;
+  const wgs84Decimal = `${lat.toFixed(5)}°N, ${lng.toFixed(5)}°E`;
+
+  // Standard UTM projection for Algeria (Zones 30N, 31N, 32N)
+  const zone = Math.max(30, Math.min(32, Math.floor((lng + 180) / 6) + 1));
+  const approxEasting = Math.round(500000 + ((lng - (zone * 6 - 183)) * 88200));
+  const approxNorthing = Math.round(lat * 111130);
+  const utmGrid = `UTM ${zone}N ${approxEasting}m E, ${approxNorthing}m N`;
+
+  const recommendedRetardantLiters = Math.min(12000, Math.max(3000, Math.round(assessment.fireRadiativePowerMw * 45)));
+  const wilayaCode = (incident.wilaya || 'DZ').slice(0, 3).toUpperCase();
+  const targetSectorId = `DZ-DROP-${wilayaCode}-${Math.floor(100 + Math.random() * 900)}`;
+
+  return {
+    wgs84DMS,
+    wgs84Decimal,
+    utmGrid,
+    dropPoint: { lat, lng },
+    frpMw: assessment.fireRadiativePowerMw,
+    coreTempC: assessment.maxHotspotTempC,
+    recommendedRetardantLiters,
+    dispatchTimestamp: new Date().toISOString(),
+    targetSectorId,
+    airOpsRadioFrequency: '123.450 MHz (DGPC AIR-OPS)'
+  };
+}
+

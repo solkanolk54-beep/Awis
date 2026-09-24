@@ -178,6 +178,8 @@ export interface WildfireIncident {
   temperatureC: number;
   humidityPercent: number;
   terrainSlopeDegrees: number;
+  ndviValue?: number; // Multi-spectral vegetation index from ALSAT-1B / Sentinel-2 (-0.1 to 0.85)
+  vegetationHealthCategory?: NdviHealthCategory;
   spreadPredictions: SpreadIsochrone[];
   exposedAssets: ExposedAsset[];
   assignedResources: string[]; // Resource IDs

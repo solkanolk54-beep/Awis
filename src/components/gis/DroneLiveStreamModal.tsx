@@ -18,10 +18,20 @@ import {
   Cpu, 
   Volume2, 
   VolumeX, 
-  RefreshCw 
+  RefreshCw,
+  Target
 } from 'lucide-react';
 import { WildfireIncident, Language, DroneEdgeVisionTelemetry, DroneTacticalAssessment } from '../../types';
-import { computeDroneTacticalAssessment } from '../../services/droneReconService';
+import { 
+  computeDroneTacticalAssessment,
+  computeTacticalDropCoordinates,
+  TacticalDropCoordinates
+} from '../../services/droneReconService';
+import { 
+  saveDroneReconSnapshot, 
+  DroneReconSnapshotData 
+} from '../../services/incidentReportGenerator';
+import { DroneAirDropToast, DroneSnapshotToast } from './DroneTacticalToasts';
 
 interface DroneLiveStreamModalProps {
   isOpen: boolean;
@@ -47,6 +57,12 @@ export const DroneLiveStreamModal: React.FC<DroneLiveStreamModalProps> = ({
   const [streamHealth, setStreamHealth] = useState({ fps: 30, bitrateMbps: 4.8, latencyMs: 135 });
   const [liveClock, setLiveClock] = useState(new Date().toTimeString().slice(0, 8));
 
+  // Tactical Actions State
+  const [dropTagged, setDropTagged] = useState(false);
+  const [snapshotTaken, setSnapshotTaken] = useState(false);
+  const [dropTacticalInfo, setDropTacticalInfo] = useState<TacticalDropCoordinates | null>(null);
+  const [snapshotCapturedInfo, setSnapshotCapturedInfo] = useState<DroneReconSnapshotData | null>(null);
+
   const modalRef = useRef<HTMLDivElement>(null);
   const isAr = currentLang === 'ar';
 
@@ -59,6 +75,128 @@ export const DroneLiveStreamModal: React.FC<DroneLiveStreamModalProps> = ({
   const windSpd = incident.windSpeedKmH || 35;
   const windDir = incident.windDirectionDegrees || 225;
   const droneCallsign = liveDroneData?.droneCallsign || 'DRONE-DZ-UAV-04';
+
+  const handleTagWaterDrop = () => {
+    const coords = computeTacticalDropCoordinates(incident, assessment);
+    setDropTacticalInfo(coords);
+    setDropTagged(true);
+    setSnapshotTaken(false);
+  };
+
+  const handleTakeSnapshot = () => {
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = 800;
+    offCanvas.height = 480;
+    const ctx = offCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = offCanvas.width;
+    const h = offCanvas.height;
+
+    if (streamMode === 'thermal_flir' || streamMode === 'fused_pip') {
+      const bgGrad = ctx.createRadialGradient(w * 0.52, h * 0.48, 10, w * 0.52, h * 0.48, w * 0.6);
+      if (thermalPalette === 'white_hot') {
+        bgGrad.addColorStop(0, '#ffffff');
+        bgGrad.addColorStop(0.2, '#d1d5db');
+        bgGrad.addColorStop(0.55, '#4b5563');
+        bgGrad.addColorStop(1, '#0b0f19');
+      } else if (thermalPalette === 'rainbow') {
+        bgGrad.addColorStop(0, '#ffffff');
+        bgGrad.addColorStop(0.15, '#ff0000');
+        bgGrad.addColorStop(0.35, '#ffff00');
+        bgGrad.addColorStop(0.55, '#00ff00');
+        bgGrad.addColorStop(0.75, '#00ffff');
+        bgGrad.addColorStop(1, '#000033');
+      } else {
+        bgGrad.addColorStop(0, '#ffffff');
+        bgGrad.addColorStop(0.14, '#facc15');
+        bgGrad.addColorStop(0.32, '#ea580c');
+        bgGrad.addColorStop(0.55, '#991b1b');
+        bgGrad.addColorStop(0.78, '#3b0764');
+        bgGrad.addColorStop(1, '#030712');
+      }
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(w * 0.52, h * 0.48, 48, 32, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const optGrad = ctx.createLinearGradient(0, 0, 0, h);
+      optGrad.addColorStop(0, '#292524');
+      optGrad.addColorStop(0.5, '#451a03');
+      optGrad.addColorStop(1, '#064e3b');
+      ctx.fillStyle = optGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      const fireGrad = ctx.createRadialGradient(w * 0.5, h * 0.45, 5, w * 0.5, h * 0.45, 70);
+      fireGrad.addColorStop(0, '#fef08a');
+      fireGrad.addColorStop(0.4, '#f97316');
+      fireGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = fireGrad;
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.45, 80, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(w * 0.5, h * 0.5, 75, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#06b6d4';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.arc(w * 0.62, h * 0.42, 28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+    ctx.fillRect(0, 0, w, 32);
+    ctx.fillRect(0, h - 34, w, 34);
+
+    ctx.font = 'bold 12px monospace';
+    ctx.fillStyle = '#10b981';
+    ctx.fillText(`AWIS AIR-RECON: ${droneCallsign} | STREAM: ${streamMode.toUpperCase()}`, 14, 21);
+
+    ctx.fillStyle = '#f87171';
+    ctx.fillText(`CORE: ${coreTemp}°C | FRP: ${assessment.fireRadiativePowerMw} MW`, w - 240, 21);
+
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`WATER DROP TARGET: ${assessment.recommendedDropPoint.lat}°N, ${assessment.recommendedDropPoint.lng}°E`, 14, h - 13);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(nowIso, w - 180, h - 13);
+
+    const base64 = offCanvas.toDataURL('image/jpeg', 0.92);
+    const dropCoords = computeTacticalDropCoordinates(incident, assessment);
+
+    const snapshotData: DroneReconSnapshotData = {
+      incidentId: incident.id,
+      imageBase64: base64,
+      timestamp: new Date().toISOString(),
+      mode: streamMode,
+      coreTempC: coreTemp,
+      flameHeightM: flameHeight,
+      frpMw: assessment.fireRadiativePowerMw,
+      waterDropTarget: {
+        lat: dropCoords.dropPoint.lat,
+        lng: dropCoords.dropPoint.lng,
+        wgs84: dropCoords.wgs84DMS,
+        utm: dropCoords.utmGrid
+      },
+      callsign: droneCallsign
+    };
+
+    saveDroneReconSnapshot(snapshotData);
+    setSnapshotCapturedInfo(snapshotData);
+    setSnapshotTaken(true);
+    setDropTagged(false);
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -102,6 +240,21 @@ export const DroneLiveStreamModal: React.FC<DroneLiveStreamModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-5xl bg-slate-950 border border-emerald-500/50 rounded-2xl shadow-[0_0_50px_rgba(16,185,129,0.25)] overflow-hidden flex flex-col max-h-[95vh] cursor-default"
       >
+        {/* Tactical Air-Drop & Snapshot Toasts */}
+        <DroneAirDropToast
+          isOpen={dropTagged}
+          onClose={() => setDropTagged(false)}
+          dropInfo={dropTacticalInfo}
+          incident={incident}
+          currentLang={currentLang}
+        />
+        <DroneSnapshotToast
+          isOpen={snapshotTaken}
+          onClose={() => setSnapshotTaken(false)}
+          snapshotInfo={snapshotCapturedInfo}
+          incident={incident}
+          currentLang={currentLang}
+        />
         {/* Stream Top Header Bar */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900/90 border-b border-emerald-500/30">
           <div className="flex items-center gap-3">
@@ -373,7 +526,35 @@ export const DroneLiveStreamModal: React.FC<DroneLiveStreamModalProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Tag Water Drop Button */}
+            <button
+              id="btn-tag-drop-zone-live"
+              onClick={handleTagWaterDrop}
+              className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-md shadow-cyan-950/40 transition cursor-pointer"
+            >
+              <Target className="w-3.5 h-3.5 text-cyan-200" />
+              <span>
+                {isAr 
+                  ? 'تحديد إحداثيات الإنزال الجوي للطائرات' 
+                  : 'Designate Canadair Drop Coordinates'}
+              </span>
+            </button>
+
+            {/* Capture Snapshot Button */}
+            <button
+              id="btn-capture-snapshot-live"
+              onClick={handleTakeSnapshot}
+              className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5 text-slate-300" />
+              <span>
+                {isAr
+                  ? 'التقاط صورة استطلاع وإرفاقها بالتقرير'
+                  : 'Capture Recon Telemetry Snapshot'}
+              </span>
+            </button>
+
             <button
               onClick={() => setShowTacticalReticle(!showTacticalReticle)}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[11px] transition cursor-pointer"

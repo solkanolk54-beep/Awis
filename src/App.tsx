@@ -909,7 +909,7 @@ function AppContent() {
         {/* Central Spatial Operations Grid */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[640px] relative">
           {/* Central Interactive GIS Map (Full-width when sidebar collapsed) */}
-          <div className={`${isSidebarCollapsed ? 'col-span-12' : 'lg:col-span-8 xl:col-span-9'} h-full min-h-[580px] flex flex-col relative transition-all duration-300`}>
+          <div className={`${isSidebarCollapsed ? 'col-span-12' : 'lg:col-span-8 xl:col-span-9'} h-full min-h-[580px] flex flex-col relative z-20 transition-all duration-300`}>
             {/* Desktop uncollapse floating trigger when sidebar is hidden */}
             {isSidebarCollapsed && (
               <button

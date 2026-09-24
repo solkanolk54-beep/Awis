@@ -468,6 +468,8 @@ export const INITIAL_INCIDENTS: WildfireIncident[] = [
     temperatureC: 40.5,
     humidityPercent: 19,
     terrainSlopeDegrees: 31,
+    ndviValue: 0.21,
+    vegetationHealthCategory: 'critical_drought',
     detectionSources: [
       {
         id: 'SIG-01',
@@ -664,6 +666,8 @@ export const INITIAL_INCIDENTS: WildfireIncident[] = [
     temperatureC: 38.0,
     humidityPercent: 24,
     terrainSlopeDegrees: 28,
+    ndviValue: 0.25,
+    vegetationHealthCategory: 'critical_drought',
     detectionSources: [
       {
         id: 'SIG-10',
@@ -807,6 +811,8 @@ export const INITIAL_INCIDENTS: WildfireIncident[] = [
     temperatureC: 36.2,
     humidityPercent: 29,
     terrainSlopeDegrees: 22,
+    ndviValue: 0.33,
+    vegetationHealthCategory: 'moisture_stressed',
     detectionSources: [
       {
         id: 'SIG-20',

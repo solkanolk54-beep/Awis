@@ -41,8 +41,15 @@ import {
   computeDroneTacticalAssessment, 
   generateHotspotPoints, 
   THERMAL_PALETTES,
-  HotspotPoint 
+  HotspotPoint,
+  computeTacticalDropCoordinates,
+  TacticalDropCoordinates
 } from '../../services/droneReconService';
+import { 
+  saveDroneReconSnapshot, 
+  DroneReconSnapshotData 
+} from '../../services/incidentReportGenerator';
+import { DroneAirDropToast, DroneSnapshotToast } from '../gis/DroneTacticalToasts';
 import { translations } from '../../i18n/translations';
 
 interface DroneViewSimulationModalProps {
@@ -74,6 +81,8 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [snapshotTaken, setSnapshotTaken] = useState(false);
   const [dropTagged, setDropTagged] = useState(false);
+  const [dropTacticalInfo, setDropTacticalInfo] = useState<TacticalDropCoordinates | null>(null);
+  const [snapshotCapturedInfo, setSnapshotCapturedInfo] = useState<DroneReconSnapshotData | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<HotspotPoint | null>(null);
 
   // Fallback incident resolution
@@ -364,13 +373,69 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
   };
 
   const handleTagWaterDrop = () => {
+    const coords = computeTacticalDropCoordinates(activeIncident, assessment);
+    setDropTacticalInfo(coords);
     setDropTagged(true);
-    setTimeout(() => setDropTagged(false), 4000);
+    setSnapshotTaken(false); // Close snapshot toast if open
   };
 
   const handleTakeSnapshot = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Create offscreen canvas with tactical watermarks & metadata border
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width || 800;
+    exportCanvas.height = canvas.height || 480;
+    const expCtx = exportCanvas.getContext('2d');
+    if (!expCtx) return;
+
+    // Draw the drone camera feed
+    expCtx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+
+    // Overlay tactical metadata bar
+    expCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    expCtx.fillRect(0, 0, exportCanvas.width, 28);
+    expCtx.fillRect(0, exportCanvas.height - 30, exportCanvas.width, 30);
+
+    expCtx.font = 'bold 11px monospace';
+    expCtx.fillStyle = '#10b981';
+    expCtx.fillText(`AWIS TACTICAL UAV: ${missionState.droneId} | MODE: ${missionState.cameraMode.toUpperCase()}`, 12, 18);
+
+    expCtx.font = 'bold 11px monospace';
+    expCtx.fillStyle = '#f87171';
+    expCtx.fillText(`PEAK CORE: ${assessment.maxHotspotTempC}°C | FRP: ${assessment.fireRadiativePowerMw} MW`, exportCanvas.width - 240, 18);
+
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    expCtx.font = '10px monospace';
+    expCtx.fillStyle = '#cbd5e1';
+    expCtx.fillText(`TARGET DROP: ${assessment.recommendedDropPoint.lat}°N, ${assessment.recommendedDropPoint.lng}°E`, 12, exportCanvas.height - 11);
+    expCtx.fillText(nowIso, exportCanvas.width - 180, exportCanvas.height - 11);
+
+    const base64 = exportCanvas.toDataURL('image/jpeg', 0.92);
+    const dropCoords = computeTacticalDropCoordinates(activeIncident, assessment);
+
+    const snapshotData: DroneReconSnapshotData = {
+      incidentId: activeIncident.id,
+      imageBase64: base64,
+      timestamp: new Date().toISOString(),
+      mode: missionState.cameraMode === 'thermal' ? 'thermal_flir' : 'optical_rgb',
+      coreTempC: assessment.maxHotspotTempC,
+      flameHeightM: assessment.flameHeightMeters,
+      frpMw: assessment.fireRadiativePowerMw,
+      waterDropTarget: {
+        lat: dropCoords.dropPoint.lat,
+        lng: dropCoords.dropPoint.lng,
+        wgs84: dropCoords.wgs84DMS,
+        utm: dropCoords.utmGrid
+      },
+      callsign: missionState.droneId
+    };
+
+    saveDroneReconSnapshot(snapshotData);
+    setSnapshotCapturedInfo(snapshotData);
     setSnapshotTaken(true);
-    setTimeout(() => setSnapshotTaken(false), 3000);
+    setDropTagged(false); // Close drop toast if open
   };
 
   const currentPaletteConfig = THERMAL_PALETTES[missionState.thermalPalette] || THERMAL_PALETTES.ironbow;
@@ -388,6 +453,21 @@ export const DroneViewSimulationModal: React.FC<DroneViewSimulationModalProps> =
           isFullscreen ? 'h-screen w-screen rounded-none max-w-none border-none' : 'max-w-6xl max-h-[95vh] h-[92vh]'
         }`}
       >
+        {/* Tactical Air-Drop & Snapshot Toasts */}
+        <DroneAirDropToast
+          isOpen={dropTagged}
+          onClose={() => setDropTagged(false)}
+          dropInfo={dropTacticalInfo}
+          incident={activeIncident}
+          currentLang={currentLang}
+        />
+        <DroneSnapshotToast
+          isOpen={snapshotTaken}
+          onClose={() => setSnapshotTaken(false)}
+          snapshotInfo={snapshotCapturedInfo}
+          incident={activeIncident}
+          currentLang={currentLang}
+        />
         {/* TOP COMMAND & TELEMETRY HEADER */}
         <div className="px-4 py-2.5 bg-slate-900/95 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 z-20">
           <div className="flex items-center gap-3">

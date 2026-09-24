@@ -29,6 +29,8 @@ interface AlsatFleetOverlayProps {
   showFootprints?: boolean;
   geoToSvg: (lat: number, lng: number) => { x: number; y: number };
   currentLang: Language;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 const SATELLITE_THEMES: Record<AlsatSatelliteId, { stroke: string; fill: string; badge: string; glow: string }> = {
@@ -68,7 +70,9 @@ export const AlsatFleetOverlay: React.FC<AlsatFleetOverlayProps> = ({
   showNdviFootprints: footprintsProp,
   showFootprints,
   geoToSvg,
-  currentLang
+  currentLang,
+  className: customClassName,
+  style: customStyle
 }) => {
   const isAr = currentLang === 'ar';
   const satellites: AlsatSatelliteId[] = ['ALSAT-1B', 'ALSAT-2A', 'ALSAT-2B'];
@@ -97,7 +101,11 @@ export const AlsatFleetOverlay: React.FC<AlsatFleetOverlayProps> = ({
   };
 
   return (
-    <g id="layer-alsat-fleet-integration" className="alsat-fleet-layer">
+    <g 
+      id="layer-alsat-fleet-integration" 
+      className={`alsat-fleet-layer ${customClassName || ''}`}
+      style={{ zIndex: 9999, ...customStyle }}
+    >
       {/* 1. SWATH CORRIDORS (Imaging Swaths) */}
       {showSwathCorridors && (
         <g id="alsat-swath-corridors" opacity={0.65}>

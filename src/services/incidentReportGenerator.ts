@@ -3,6 +3,52 @@ import { WildfireIncident, Language, DroneEdgeVisionTelemetry, AlsatRealtimePosi
 import { computeRothermelHazardArea } from './cellBroadcastService';
 import { computeDroneTacticalAssessment } from './droneReconService';
 
+export interface DroneReconSnapshotData {
+  incidentId: string;
+  imageBase64: string;
+  timestamp: string;
+  mode: 'thermal_flir' | 'optical_rgb' | 'fused_pip';
+  coreTempC: number;
+  flameHeightM: number;
+  frpMw: number;
+  waterDropTarget: {
+    lat: number;
+    lng: number;
+    wgs84: string;
+    utm: string;
+  };
+  callsign: string;
+}
+
+// In-memory cache of attached drone recon snapshots
+const droneSnapshotCache: Record<string, DroneReconSnapshotData> = {};
+
+export function saveDroneReconSnapshot(snapshot: DroneReconSnapshotData): void {
+  droneSnapshotCache[snapshot.incidentId] = snapshot;
+  try {
+    localStorage.setItem(`awis_recon_snapshot_${snapshot.incidentId}`, JSON.stringify(snapshot));
+  } catch (e) {
+    console.warn('Could not cache snapshot in localStorage', e);
+  }
+}
+
+export function getLatestDroneReconSnapshot(incidentId: string): DroneReconSnapshotData | null {
+  if (droneSnapshotCache[incidentId]) {
+    return droneSnapshotCache[incidentId];
+  }
+  try {
+    const raw = localStorage.getItem(`awis_recon_snapshot_${incidentId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      droneSnapshotCache[incidentId] = parsed;
+      return parsed;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return null;
+}
+
 export interface SovereignExecutiveReportData {
   incident: WildfireIncident;
   droneTelemetry?: DroneEdgeVisionTelemetry;
@@ -10,6 +56,8 @@ export interface SovereignExecutiveReportData {
   commandingOfficer?: string;
   securityClassification?: 'SECRET-DEFENSE // CONFIDENTIEL' | 'TACTICAL-RESTRICTED';
   generationDate?: string;
+  droneReconSnapshotBase64?: string;
+  droneReconSnapshotMetadata?: Partial<DroneReconSnapshotData>;
 }
 
 /**
@@ -227,14 +275,23 @@ export function generateExecutiveIncidentReport(
   doc.text('2. CALIBRATION TACTIQUE PAR VECTEUR AÉRIEN DRONE (FLIR / THERMOGRAPHIE)', marginX + 3, currentY + 4.2);
 
   currentY += 8;
-  doc.setFillColor(...bgCard);
-  doc.roundedRect(marginX, currentY, contentWidth, 30, 1.5, 1.5, 'FD');
 
   const flameHeight = data.droneTelemetry?.visionDetections.measuredFlameHeightMeters ?? droneAssessment.flameHeightMeters;
   const coreTemp = data.droneTelemetry?.visionDetections.peakRadiometricTempC ?? droneAssessment.maxHotspotTempC;
   const droneAlt = data.droneTelemetry?.dronePosition.altitudeAglMeters ?? 340;
   const dropLat = droneAssessment.recommendedDropPoint.lat;
   const dropLng = droneAssessment.recommendedDropPoint.lng;
+
+  // Retrieve any attached or cached drone recon snapshot for this incident
+  const attachedSnapshot = data.droneReconSnapshotBase64
+    ? { imageBase64: data.droneReconSnapshotBase64, timestamp: data.generationDate || new Date().toISOString() }
+    : getLatestDroneReconSnapshot(inc.id);
+
+  const hasSnapshot = Boolean(attachedSnapshot?.imageBase64);
+  const droneCardHeight = hasSnapshot ? 44 : 30;
+
+  doc.setFillColor(...bgCard);
+  doc.roundedRect(marginX, currentY, contentWidth, droneCardHeight, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
@@ -247,9 +304,41 @@ export function generateExecutiveIncidentReport(
   doc.text(`• Température maximale du foyer de flamme: ${coreTemp}°C (Mesure infrarouge étalonnée).`, marginX + 4, currentY + 11);
   doc.text(`• Hauteur mesurée des flammes de front: ${flameHeight} mètres | Puissance radiative d'incendie (FRP): ${droneAssessment.fireRadiativePowerMw} MW.`, marginX + 4, currentY + 15.5);
   doc.text(`• Altitude de vol d'observation: ${droneAlt}m AGL | Dé-brumage par algorithme IA actif.`, marginX + 4, currentY + 20);
-  doc.text(`• Coordonnées optimales de largage Canadair / Hélicoptère bombardier: ${dropLat}°N, ${dropLng}°E (Ligne d'arrêt humide).`, marginX + 4, currentY + 24.5);
+  doc.text(`• Coordonnées optimales de largage Canadair / Hélicoptère: ${dropLat}°N, ${dropLng}°E (Ligne d'arrêt humide).`, marginX + 4, currentY + 24.5);
 
-  currentY += 34;
+  if (hasSnapshot && attachedSnapshot?.imageBase64) {
+    doc.text(`• Cible d'arrosage L3 transmise à la flotte aérienne Protection Civile.`, marginX + 4, currentY + 29);
+    doc.text(`• Cliché haute résolution validé pour l'enquête technique et le dossier d'indemnisation.`, marginX + 4, currentY + 33.5);
+
+    try {
+      const imgW = 54;
+      const imgH = 34;
+      const imgX = marginX + contentWidth - imgW - 3;
+      const imgY = currentY + 4;
+
+      // Dark background for tactical photo
+      doc.setFillColor(15, 23, 42);
+      doc.roundedRect(imgX - 0.8, imgY - 0.8, imgW + 1.6, imgH + 1.6, 1, 1, 'F');
+
+      // Embed the drone recon image
+      doc.addImage(attachedSnapshot.imageBase64, 'JPEG', imgX, imgY, imgW, imgH);
+
+      // Algeria Green Tactical Frame
+      doc.setDrawColor(...algeriaGreen);
+      doc.setLineWidth(0.4);
+      doc.roundedRect(imgX, imgY, imgW, imgH, 0.5, 0.5, 'D');
+
+      // Caption
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      doc.setTextColor(...algeriaGreen);
+      doc.text('CLICHÉ RECO FLIR AÉROPORTÉ L3', imgX + imgW / 2, imgY + imgH + 3.2, { align: 'center' });
+    } catch (e) {
+      console.warn('Could not embed drone snapshot image into PDF', e);
+    }
+  }
+
+  currentY += droneCardHeight + 4;
 
   // =========================================================================
   // 6. SECTION C: CONE D'ÉVACUATION CELL BROADCAST / ALERTE POPULATION

@@ -1,7 +1,7 @@
 // AWIS — ALSAT Fleet Control HUD Panel & Multispectral Pass Explorer
 // Algerian Space Agency (ASAL) Satellite Integration Control Interface
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Satellite, 
   Orbit, 
@@ -94,10 +94,22 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
 
   const currentSelectedPass = passProp ?? (selectedPassId ? passes.find(p => p.id === selectedPassId) || null : null);
 
+  // Tactical keyboard shortcut: Dismiss ALSAT HUD on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
     <div 
       id="alsat-fleet-hud-modal"
-      className="absolute top-16 right-4 z-40 w-96 max-h-[82vh] bg-slate-900/95 border border-emerald-500/40 rounded-2xl shadow-2xl backdrop-blur-xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+      className="fixed top-16 md:top-20 end-4 sm:end-6 z-[9999] w-[calc(100vw-2rem)] sm:w-96 max-h-[85vh] bg-slate-900/98 border border-emerald-500/60 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 ring-1 ring-emerald-500/40 relative"
+      style={{ zIndex: 9999 }}
     >
       {/* HUD Header */}
       <div className="p-3.5 bg-gradient-to-r from-slate-900 via-emerald-950/40 to-slate-900 border-b border-emerald-500/30 flex items-center justify-between">
@@ -125,19 +137,25 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onRefreshTelemetry}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-emerald-300 transition cursor-pointer"
+            className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-emerald-300 border border-transparent hover:border-slate-700 transition cursor-pointer"
             title={isAr ? 'تحديث الموقع اللحظي' : 'Refresh Telemetry'}
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+
+          {/* Explicit Tactical Close Button (X) */}
           <button
+            id="btn-close-alsat-hud"
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+            aria-label={isAr ? 'إغلاق نافذة أقمار ألسات (مفتاح Esc)' : 'Close ALSAT HUD (Esc)'}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-800/90 hover:bg-rose-950/80 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-500/70 transition-all shadow-md cursor-pointer group"
+            title={isAr ? 'إغلاق النافذة التفاعلية (Esc)' : 'Close Telemetry HUD (Esc)'}
           >
-            <X className="w-4 h-4" />
+            <span className="text-[9px] font-mono font-bold text-slate-400 group-hover:text-rose-300 hidden sm:inline">ESC</span>
+            <X className="w-4 h-4 text-slate-300 group-hover:text-rose-300 group-hover:scale-110 transition-transform" />
           </button>
         </div>
       </div>

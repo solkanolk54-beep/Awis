@@ -27,7 +27,9 @@ import {
   Target, 
   Sparkles,
   Info,
-  ChevronDown
+  ChevronDown,
+  RefreshCw,
+  Satellite
 } from 'lucide-react';
 import { WildfireIncident, Language, ExposedAsset } from '../../types';
 import { 
@@ -36,6 +38,7 @@ import {
   BurnRateModelInput,
   degreesToCardinal 
 } from '../../services/burnRateModelingService';
+import { fetchLiveWeather } from '../../services/liveWeatherService';
 
 interface PredictiveBurnRateModalProps {
   incident: WildfireIncident | null;
@@ -96,6 +99,8 @@ export const PredictiveBurnRateModal: React.FC<PredictiveBurnRateModalProps> = (
   const [activePreset, setActivePreset] = useState<'telemetry' | 'sirocco' | 'coastal' | 'night' | 'custom'>('telemetry');
   const [activeViewTab, setActiveViewTab] = useState<'spatial' | 'growthChart' | 'sensitivity'>('spatial');
   const [copiedReport, setCopiedReport] = useState<boolean>(false);
+  const [isSyncingWeather, setIsSyncingWeather] = useState<boolean>(false);
+  const [weatherSyncFeedback, setWeatherSyncFeedback] = useState<string | null>(null);
 
   // Sync inputs when active incident changes
   useEffect(() => {
@@ -105,7 +110,38 @@ export const PredictiveBurnRateModal: React.FC<PredictiveBurnRateModalProps> = (
     setTemperature(activeIncident.temperatureC || 38);
     setSlope(activeIncident.terrainSlopeDegrees || 24);
     setActivePreset('telemetry');
+    setWeatherSyncFeedback(null);
   }, [activeIncident]);
+
+  // Handler for Live Weather Synchronization
+  const handleSyncLiveWeather = async () => {
+    setIsSyncingWeather(true);
+    setWeatherSyncFeedback(null);
+    try {
+      const live = await fetchLiveWeather(activeIncident.coordinates);
+      setWindSpeed(live.windSpeedKmH);
+      setWindDirection(live.windDirectionDegrees);
+      setHumidity(live.humidityPercent);
+      setTemperature(live.temperatureC);
+      setActivePreset('custom');
+      setWeatherSyncFeedback(
+        currentLang === 'ar'
+          ? `تم التحديث الحي: ${live.temperatureC}°م • ${live.humidityPercent}% رطوبة • ${live.windSpeedKmH} كم/سا (${live.windDirectionCardinal})`
+          : `Live Synced: ${live.temperatureC}°C • ${live.humidityPercent}% RH • ${live.windSpeedKmH} km/h (${live.windDirectionCardinal})`
+      );
+      setTimeout(() => setWeatherSyncFeedback(null), 5000);
+    } catch (err) {
+      console.error('Failed to sync live weather:', err);
+      setWeatherSyncFeedback(
+        currentLang === 'ar'
+          ? 'تعذر جلب الطقس الحي؛ يتم استخدام بيانات الطوارئ المخزنة'
+          : 'Failed to fetch live weather; retained current telemetry'
+      );
+      setTimeout(() => setWeatherSyncFeedback(null), 4000);
+    } finally {
+      setIsSyncingWeather(false);
+    }
+  };
 
   // Compute burn rate modeling result using Rothermel & Huygens physics engine
   const assessment: BurnRateAssessmentResult = useMemo(() => {
@@ -119,7 +155,8 @@ export const PredictiveBurnRateModal: React.FC<PredictiveBurnRateModalProps> = (
       humidityPercent: humidity,
       temperatureC: temperature,
       slopeDegrees: slope,
-      vegetationType: 'cork_oak'
+      vegetationType: 'cork_oak',
+      ndviValue: activeIncident.ndviValue
     };
     return calculatePredictiveBurnRate(input, activeIncident);
   }, [activeIncident, windSpeed, windDirection, humidity, temperature, slope]);
@@ -941,6 +978,20 @@ Required Resources: ${assessment.isochrones.twentyFourHour.requiredPumperUnits} 
                 </button>
               );
             })}
+
+            {/* Sync Live Weather Button */}
+            <button
+              id="sync-live-weather-btn"
+              onClick={handleSyncLiveWeather}
+              disabled={isSyncingWeather}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-gradient-to-r from-sky-600 to-teal-600 hover:from-sky-500 hover:to-teal-500 text-white font-bold transition shadow-sm cursor-pointer disabled:opacity-50"
+              title="Fetch live temperature, humidity, and wind speed for this incident from Open-Meteo"
+            >
+              <RefreshCw className={`w-3 h-3 text-sky-200 ${isSyncingWeather ? 'animate-spin' : ''}`} />
+              <span>{isSyncingWeather 
+                ? (currentLang === 'ar' ? 'جارِ جلب الطقس...' : 'Syncing...') 
+                : (currentLang === 'ar' ? 'تحديث الطقس الحي (Live)' : 'Sync Live Weather')}</span>
+            </button>
           </div>
 
           {/* VIEW SWITCHER TABS */}
@@ -1211,6 +1262,14 @@ Required Resources: ${assessment.isochrones.twentyFourHour.requiredPumperUnits} 
                   <span className="text-[10px] text-slate-500">Live Sensitivity</span>
                 </div>
 
+                {/* Weather Sync Banner Feedback */}
+                {weatherSyncFeedback && (
+                  <div className="p-2 rounded-lg bg-sky-950/80 border border-sky-500/50 text-[11px] text-sky-200 font-mono flex items-center gap-1.5 animate-fadeIn">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>{weatherSyncFeedback}</span>
+                  </div>
+                )}
+
                 {/* Wind Speed Slider */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs font-mono">
@@ -1339,6 +1398,35 @@ Required Resources: ${assessment.isochrones.twentyFourHour.requiredPumperUnits} 
                       onChange={(e) => setSlope(Number(e.target.value))}
                       className="w-full accent-purple-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
                     />
+                  </div>
+                </div>
+
+                {/* ALSAT Multi-Spectral NDVI Fuel Moisture Status */}
+                <div className="pt-2 border-t border-slate-800/80">
+                  <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <Satellite className="w-3 h-3 text-emerald-400" />
+                      <span>{currentLang === 'ar' ? 'معايرة قمر ALSAT (NDVI)' : 'ALSAT NDVI Fuel Calibration'}</span>
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 font-bold">
+                      NDVI: {assessment.satelliteNdvi?.measuredNdvi ?? (activeIncident.ndviValue ?? 0.28)}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[10px] space-y-1">
+                    <div className="flex justify-between text-slate-300">
+                      <span>{currentLang === 'ar' ? 'رطوبة الوقود الفعلية (FMC):' : 'Effective FMC:'}</span>
+                      <span className="font-mono font-bold text-amber-300">
+                        {assessment.effectiveFuelMoisturePercent}% 
+                        <span className="text-slate-500 font-normal ml-1">
+                          ({assessment.satelliteNdvi?.fmcAdjustmentPercent && assessment.satelliteNdvi.fmcAdjustmentPercent < 0 
+                            ? `${assessment.satelliteNdvi.fmcAdjustmentPercent}% penalty` 
+                            : 'nominal'})
+                        </span>
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {assessment.satelliteNdvi?.droughtImpactDescription}
+                    </div>
                   </div>
                 </div>
               </div>

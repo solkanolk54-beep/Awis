@@ -12,6 +12,7 @@ export interface BurnRateModelInput {
   slopeDegrees: number; // 0 - 45°
   vegetationType: string;
   fuelModelName?: string;
+  ndviValue?: number; // Multi-spectral NDVI from ALSAT-1B/2A passes (-0.1 to 0.85)
 }
 
 export interface IsochroneProjection {
@@ -61,6 +62,12 @@ export interface BurnRateAssessmentResult {
   lengthToWidthRatio: number;
   effectiveFuelMoisturePercent: number;
   fuelMoistureDampingFactor: number;
+  satelliteNdvi?: {
+    measuredNdvi: number;
+    droughtImpactDescription: string;
+    fmcAdjustmentPercent: number;
+    satelliteSource: string;
+  };
   windMultiplier: number;
   slopeMultiplier: number;
   currentSpreadVelocityMMin: number;
@@ -173,7 +180,8 @@ export function calculatePredictiveBurnRate(input: BurnRateModelInput, incident:
     humidityPercent,
     temperatureC,
     slopeDegrees,
-    vegetationType
+    vegetationType,
+    ndviValue
   } = input;
 
   // 1. Flame Propagation Direction:
@@ -182,16 +190,33 @@ export function calculatePredictiveBurnRate(input: BurnRateModelInput, incident:
   const flameHeadingCardinal = degreesToCardinal(flameHeadingDegrees);
   const flameHeadingRad = (flameHeadingDegrees * Math.PI) / 180;
 
-  // 2. Fuel Moisture Content (FMC) approximation from Temperature & Humidity:
-  // Canadian FFMC / Rothermel empirical calibration
-  const effectiveFMC = Math.max(4, Math.min(38, 
-    2.5 + 0.32 * humidityPercent - 0.12 * Math.max(0, temperatureC - 20)
-  ));
+  // 2. Fuel Moisture Content (FMC) approximation from Temperature, Humidity & ALSAT NDVI:
+  // Baseline Canadian FFMC / Rothermel empirical calibration
+  const meteorologicalFMC = 2.5 + 0.32 * humidityPercent - 0.12 * Math.max(0, temperatureC - 20);
+
+  // Calibrate with ALSAT multi-spectral NDVI (Normal healthy green biomass: NDVI ~0.45 - 0.70; Parched/Drought: <0.30)
+  // Lower NDVI indicates desiccated foliar biomass and high volatile resin ratio, reducing foliar fuel moisture
+  const resolvedNdvi = ndviValue ?? incident.ndviValue ?? 0.28;
+  // NDVI calibration delta: for NDVI < 0.40, fuel is desiccated (-0.5% to -5.0% FMC penalty)
+  const ndviDelta = Math.min(3.5, Math.max(-6.0, (resolvedNdvi - 0.40) * 12.0));
+  const effectiveFMC = Math.max(3.5, Math.min(38, meteorologicalFMC + ndviDelta));
   
   // Fuel moisture damping factor eta_M
   const fuelModel = FUEL_MODELS[vegetationType.toLowerCase()] || FUEL_MODELS.default;
-  const moistureRatio = effectiveFMC / fuelModel.extinctionMoisture;
+  const extinctionMoistureAdjusted = Math.max(16, fuelModel.extinctionMoisture + (resolvedNdvi < 0.30 ? -4 : 0));
+  const moistureRatio = effectiveFMC / extinctionMoistureAdjusted;
   const fuelMoistureDamping = Math.max(0.08, 1 - 2.59 * moistureRatio + 5.11 * Math.pow(moistureRatio, 2) - 3.52 * Math.pow(moistureRatio, 3));
+
+  const satelliteNdviInfo = {
+    measuredNdvi: Number(resolvedNdvi.toFixed(2)),
+    droughtImpactDescription: resolvedNdvi < 0.25 
+      ? 'Critical Desiccation (Severe Drought Stress)' 
+      : resolvedNdvi < 0.38 
+      ? 'Moderate Drought Stress (High Flammability)' 
+      : 'Normal Hydrated Biomass',
+    fmcAdjustmentPercent: Number(ndviDelta.toFixed(1)),
+    satelliteSource: 'ASAL ALSAT-1B / ALSAT-2A Multi-Spectral'
+  };
 
   // 3. Wind Multiplier (phi_w):
   // Strong wind accelerates convection, preheats fuel ahead of the flame front
@@ -395,6 +420,7 @@ export function calculatePredictiveBurnRate(input: BurnRateModelInput, incident:
     lengthToWidthRatio: Math.round(lengthToWidthRatio * 100) / 100,
     effectiveFuelMoisturePercent: Math.round(effectiveFMC * 10) / 10,
     fuelMoistureDampingFactor: Math.round(fuelMoistureDamping * 100) / 100,
+    satelliteNdvi: satelliteNdviInfo,
     windMultiplier: Math.round(windMultiplier * 100) / 100,
     slopeMultiplier: Math.round(slopeMultiplier * 100) / 100,
     currentSpreadVelocityMMin: Math.round(baseRateMMin * 10) / 10,

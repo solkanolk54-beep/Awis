@@ -158,11 +158,13 @@ export const FlameIntensityHeatmapBarGraph: React.FC<FlameIntensityHeatmapBarGra
     const initialArea = Math.max(0.5, incident.estimatedBurnedHectares || 5);
     const slope = incident.terrainSlopeDegrees || 20;
 
-    // 1. Effective Fuel Moisture Content (FMC)
-    const effectiveFMC = Math.max(4, Math.min(35, 
-      2.8 + 0.30 * humidity - 0.11 * Math.max(0, temperature - 20)
-    ));
-    const moistureRatio = effectiveFMC / 26; // extinction moisture ~26%
+    // 1. Effective Fuel Moisture Content (FMC) incorporating ALSAT multi-spectral NDVI
+    const meteorologicalFMC = 2.8 + 0.30 * humidity - 0.11 * Math.max(0, temperature - 20);
+    const resolvedNdvi = incident.ndviValue ?? 0.28;
+    const ndviDelta = Math.min(3.5, Math.max(-6.0, (resolvedNdvi - 0.40) * 12.0));
+    const effectiveFMC = Math.max(3.5, Math.min(35, meteorologicalFMC + ndviDelta));
+    const extinctionMoisture = Math.max(18, 26 + (resolvedNdvi < 0.30 ? -4 : 0));
+    const moistureRatio = effectiveFMC / extinctionMoisture;
     const fuelDamping = Math.max(0.08, 1 - 2.59 * moistureRatio + 5.11 * Math.pow(moistureRatio, 2) - 3.52 * Math.pow(moistureRatio, 3));
 
     // 2. Wind multiplier
