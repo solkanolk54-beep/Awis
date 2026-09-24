@@ -142,8 +142,8 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
       id="alsat-fleet-hud-inner"
       className="relative w-full h-full flex flex-col overflow-hidden pointer-events-auto bg-slate-900"
     >
-      {/* HUD Header */}
-      <div className="p-3.5 sm:p-4 bg-gradient-to-r from-slate-900 via-emerald-950/40 to-slate-900 border-b border-emerald-500/30 flex items-center justify-between">
+      {/* الهيدر الثابت (Header) */}
+      <div className="shrink-0 p-3.5 sm:p-4 bg-gradient-to-r from-slate-900 via-emerald-950/40 to-slate-900 border-b border-emerald-500/30 flex items-center justify-between">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <div className="p-2 sm:p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
             <Satellite className="w-5 h-5 animate-pulse" />
@@ -192,7 +192,7 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-800 bg-slate-950/60 text-xs">
+      <div className="shrink-0 flex border-b border-slate-800 bg-slate-950/60 text-xs">
         <button
           onClick={() => setActiveTab('fleet')}
           className={`flex-1 py-2 font-semibold text-center transition cursor-pointer ${
@@ -219,12 +219,11 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
         </button>
       </div>
 
-      {/* Content Body */}
+      {/* جسم المحتوى القابل للتمرير (Scrollable Body) */}
       <div 
-        className="p-3 space-y-3 overflow-y-auto max-h-[60vh] text-xs transform-gpu will-change-transform"
+        className="flex-1 overflow-y-auto p-4 space-y-4 touch-pan-y overscroll-contain text-xs"
         style={{
-          WebkitOverflowScrolling: 'touch',
-          touchAction: 'pan-y'
+          WebkitOverflowScrolling: 'touch'
         }}
       >
         {/* Layer Display Controls */}

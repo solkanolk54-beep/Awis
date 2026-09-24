@@ -101,12 +101,12 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
       {toastMessage && (
         <div 
           id="satellite-stream-card-toast"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[10005] px-4 py-2 rounded-xl bg-slate-950/95 border border-emerald-500/80 shadow-[0_10px_30px_rgba(16,185,129,0.35)] backdrop-blur-md flex items-center gap-2.5 text-xs text-white animate-in slide-in-from-top duration-300"
+          className="fixed top-3 left-1/2 -translate-x-1/2 z-[100010] max-w-[90vw] px-3.5 py-1.5 rounded-full bg-slate-950/95 border border-emerald-500/90 shadow-[0_10px_25px_rgba(16,185,129,0.3)] backdrop-blur-md flex items-center gap-2 text-xs text-white animate-in slide-in-from-top-2 duration-200 pointer-events-none"
         >
-          <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-3.5 h-3.5" />
+          <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-3 h-3" />
           </div>
-          <span className="font-semibold text-emerald-200">{toastMessage}</span>
+          <span className="font-semibold text-emerald-200 truncate">{toastMessage}</span>
         </div>
       )}
 
