@@ -130,15 +130,15 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   if (!isOpen) return null;
 
   const content = (
-    <div id="alsat-hud-modal-root" className="fixed inset-0 z-[9999] pointer-events-none">
-      {/* Semi-transparent tactical backdrop */}
-      <div 
-        id="alsat-hud-modal-backdrop"
-        onClick={onClose}
-        className="fixed inset-0 z-[9998] bg-black/40 backdrop-blur-[2px] transition-all duration-200 animate-in fade-in cursor-pointer pointer-events-auto"
-        aria-label={isAr ? 'إغلاق لوحة القيادة' : 'Dismiss HUD'}
-      />
-
+    <div 
+      id="alsat-hud-modal-root" 
+      className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 md:p-6 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       {/* Toast Feedback Notification Banner */}
       {toastMessage && (
         <div 
@@ -158,8 +158,12 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
         </div>
       )}
 
-      {/* Render the Master Tactical HUD with guaranteed defined properties */}
-      <div className="fixed top-16 md:top-20 end-4 sm:end-6 z-[9999] pointer-events-auto">
+      {/* صندوق النافذة الرئيسي (Modal Content) */}
+      <div 
+        id="alsat-hud-modal-content"
+        className="relative w-full max-w-4xl max-h-[85vh] bg-slate-900 border border-emerald-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col mx-auto my-auto pointer-events-auto ring-1 ring-emerald-500/30 animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         <AlsatFleetHUD
           positions={safePositions}
           passes={safePasses}

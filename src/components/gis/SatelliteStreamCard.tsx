@@ -1,7 +1,7 @@
 // AWIS — ALSAT Satellite Stream Card Component
 // Interactive marker popup and telemetry telemetry stream card with HUD launch trigger and fallback resilience
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Satellite, 
   SlidersHorizontal, 
@@ -67,8 +67,17 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
     ? Math.round(safePosition.groundFootprintRadiusKm * 0.45) 
     : 140;
 
-  const handleLaunchHud = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const lastLaunchTimeRef = useRef<number>(0);
+
+  const handleLaunchHud = (e?: React.MouseEvent | React.TouchEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const now = Date.now();
+    if (now - lastLaunchTimeRef.current < 350) {
+      return;
+    }
+    lastLaunchTimeRef.current = now;
 
     // 1. إظهار إشعار التأكيد
     const text = isAr
@@ -104,9 +113,12 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
       {/* Main Satellite Card */}
       <div 
         id={`satellite-stream-card-${satelliteId}`}
-        className={`bg-slate-900/98 text-slate-100 border border-emerald-500/70 rounded-2xl shadow-[0_25px_60px_-10px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-3.5 w-76 sm:w-84 font-sans relative ring-1 ring-emerald-500/50 ${
+        className={`bg-slate-900/98 text-slate-100 border border-emerald-500/70 rounded-2xl shadow-[0_25px_60px_-10px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-3.5 w-76 sm:w-84 font-sans relative z-40 pointer-events-auto touch-auto select-auto ring-1 ring-emerald-500/50 ${
           isEmbedded ? 'w-full' : ''
         }`}
+        style={{ pointerEvents: 'auto' }}
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
       >
         {/* Header with Satellite badge & Dismiss button */}
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
@@ -206,13 +218,18 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
         )}
 
         {/* Action CTA Buttons */}
-        <div className="flex items-center gap-1.5 pt-0.5">
+        <div className="flex items-center gap-1.5 pt-0.5 relative z-50">
           <button
             id="btn-open-alsat-hud"
             onClick={handleLaunchHud}
-            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[11px] shadow-lg shadow-emerald-950/50 cursor-pointer transition transform active:scale-95"
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              handleLaunchHud(e);
+            }}
+            className="relative z-50 pointer-events-auto touch-manipulation cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 transition transform active:scale-95"
+            style={{ zIndex: 50, pointerEvents: 'auto' }}
           >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <SlidersHorizontal className="w-4 h-4" />
             <span>{isAr ? 'فتح لوحة القيادة (HUD)' : 'Open ALSAT HUD'}</span>
           </button>
 

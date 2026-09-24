@@ -4878,15 +4878,18 @@ export const GISMap: React.FC<GISMapProps> = ({
             style={{ zIndex: 9999 }}
           >
             <div
-              className="leaflet-popup pointer-events-auto absolute transition-all duration-150 animate-in fade-in zoom-in-95"
+              className="leaflet-popup pointer-events-auto absolute transition-all duration-150 animate-in fade-in zoom-in-95 touch-auto select-auto"
               style={{
                 left: `${screenX}px`,
                 top: `${screenY - 14}px`,
                 transform: 'translate(-50%, -100%)',
-                zIndex: 9999
+                zIndex: 9999,
+                pointerEvents: 'auto'
               }}
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
             >
-              <div className="relative">
+              <div className="relative pointer-events-auto" style={{ pointerEvents: 'auto' }}>
                 <SatelliteStreamCard
                   satelliteId={satName}
                   position={alsatPositions[satName]}
