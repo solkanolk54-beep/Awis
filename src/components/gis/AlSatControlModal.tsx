@@ -44,10 +44,11 @@ export interface AlSatControlModalProps {
   onToggleNdviFootprints?: () => void;
   onRefreshTelemetry?: () => void;
   isOnline?: boolean;
+  toastFeedback?: string | null;
 }
 
 export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
-  isOpen = true,
+  isOpen = false,
   onClose,
   currentLang = 'ar',
   satellite,
@@ -73,7 +74,8 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   onToggleFootprints,
   onToggleNdviFootprints,
   onRefreshTelemetry,
-  isOnline = true
+  isOnline = true,
+  toastFeedback = null
 }) => {
   const isAr = currentLang === 'ar';
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -107,25 +109,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
     return passes;
   }, [passes]);
 
-  // Operational feedback toast on open
-  useEffect(() => {
-    if (isOpen) {
-      const isSimulated = !positions || Object.keys(positions).length === 0 || !isOnline;
-      const text = isAr
-        ? isSimulated
-          ? 'تم تفعيل لوحة القيادة التكتيكية (HUD) لمحاكاة السطح الميداني لأقمار ALSAT'
-          : 'تم فتح لوحة القيادة التكتيكية للسطح الميداني لأقمار ALSAT بنجاح'
-        : isSimulated
-          ? 'Tactical Surface Simulation HUD Activated for ALSAT Fleet'
-          : 'ALSAT Tactical Surface HUD Connected & Active';
-
-      setToastMessage(text);
-      const timer = setTimeout(() => {
-        setToastMessage(null);
-      }, 3500);
-      return () => clearTimeout(timer);
-    }
-  }, [isOpen, isOnline, positions, isAr]);
+  const displayedToast = toastFeedback || toastMessage;
 
   if (!isOpen) return null;
 
@@ -140,7 +124,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
       }}
     >
       {/* Toast Feedback Notification Banner */}
-      {toastMessage && (
+      {displayedToast && (
         <div 
           id="alsat-tactical-toast-banner"
           className="fixed top-3 left-1/2 -translate-x-1/2 z-[100010] max-w-[90vw] px-3.5 py-1.5 rounded-full bg-slate-950/95 border border-emerald-500/90 shadow-[0_10px_25px_rgba(16,185,129,0.3)] backdrop-blur-md flex items-center gap-2 text-xs text-white animate-in slide-in-from-top-2 duration-200 pointer-events-auto"
@@ -148,7 +132,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
           <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-3 h-3" />
           </div>
-          <span className="font-semibold text-emerald-200 truncate">{toastMessage}</span>
+          <span className="font-semibold text-emerald-200 truncate">{displayedToast}</span>
           <button 
             onClick={() => setToastMessage(null)}
             className="text-slate-400 hover:text-white p-0.5 ml-1 transition cursor-pointer shrink-0"

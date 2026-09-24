@@ -226,11 +226,11 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
               e.stopPropagation();
               handleLaunchHud(e);
             }}
-            className="relative z-50 pointer-events-auto touch-manipulation cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 transition transform active:scale-95"
-            style={{ zIndex: 50, pointerEvents: 'auto' }}
+            className="relative z-40 flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg hover:bg-emerald-500/30 transition-all cursor-pointer pointer-events-auto flex-1 font-bold text-xs"
+            style={{ pointerEvents: 'auto' }}
           >
-            <SlidersHorizontal className="w-4 h-4" />
-            <span>{isAr ? 'فتح لوحة القيادة (HUD)' : 'Open ALSAT HUD'}</span>
+            <Satellite className="w-4 h-4" />
+            <span>{isAr ? 'لوحة القيادة ALSAT' : 'ALSAT Fleet HUD'}</span>
           </button>
 
           {onCenter && (
@@ -249,8 +249,8 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
         </div>
       </div>
 
-      {/* Tactical ALSAT Surface Simulation HUD Modal (Mounted via Portal at fixed z-index: 9999) */}
-      {isHudOpen && (
+      {/* Tactical ALSAT Surface Simulation HUD Modal (Only when parent onOpenHud is not provided) */}
+      {!onOpenHud && isHudOpen && (
         <SatelliteHudModal
           isOpen={isHudOpen}
           onClose={() => setIsHudOpen(false)}
