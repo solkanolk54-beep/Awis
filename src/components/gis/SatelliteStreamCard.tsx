@@ -113,7 +113,7 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
       {/* Main Satellite Card */}
       <div 
         id={`satellite-stream-card-${satelliteId}`}
-        className={`bg-slate-900/98 text-slate-100 border border-emerald-500/70 rounded-2xl shadow-[0_25px_60px_-10px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-3.5 w-76 sm:w-84 font-sans relative z-40 pointer-events-auto touch-auto select-auto ring-1 ring-emerald-500/50 ${
+        className={`bg-slate-900/98 text-slate-100 border border-emerald-500/70 rounded-2xl shadow-[0_25px_60px_-10px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-3.5 w-76 sm:w-84 max-w-[calc(100vw-2rem)] font-sans relative z-40 pointer-events-auto touch-auto select-auto ring-1 ring-emerald-500/50 ${
           isEmbedded ? 'w-full' : ''
         }`}
         style={{ pointerEvents: 'auto' }}

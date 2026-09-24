@@ -132,7 +132,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   const content = (
     <div 
       id="alsat-hud-modal-root" 
-      className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 md:p-6 overflow-y-auto"
+      className="fixed inset-0 z-[99999] w-screen h-screen max-w-[100dvw] max-h-[100dvh] bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-hidden will-change-transform transform-gpu"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -143,7 +143,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
       {toastMessage && (
         <div 
           id="alsat-tactical-toast-banner"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[10005] px-4 py-2 rounded-xl bg-slate-950/95 border border-emerald-500/80 shadow-[0_10px_30px_rgba(16,185,129,0.35)] backdrop-blur-md flex items-center gap-2.5 text-xs text-white animate-in slide-in-from-top duration-300 pointer-events-auto"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[100005] px-4 py-2 rounded-xl bg-slate-950/95 border border-emerald-500/80 shadow-[0_10px_30px_rgba(16,185,129,0.35)] backdrop-blur-md flex items-center gap-2.5 text-xs text-white animate-in slide-in-from-top duration-300 pointer-events-auto"
         >
           <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -161,7 +161,11 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
       {/* صندوق النافذة الرئيسي (Modal Content) */}
       <div 
         id="alsat-hud-modal-content"
-        className="relative w-full max-w-4xl max-h-[85vh] bg-slate-900 border border-emerald-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col mx-auto my-auto pointer-events-auto ring-1 ring-emerald-500/30 animate-in fade-in zoom-in-95 duration-200"
+        className="relative w-full max-w-2xl max-h-[90dvh] bg-slate-900 border border-emerald-500/40 rounded-xl shadow-2xl flex flex-col pointer-events-auto transform-gpu will-change-transform overflow-y-auto ring-1 ring-emerald-500/30"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          touchAction: 'pan-y'
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <AlsatFleetHUD

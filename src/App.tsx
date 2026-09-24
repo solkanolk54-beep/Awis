@@ -859,7 +859,7 @@ function AppContent() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#050811] text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-black">
+    <div className="flex flex-col min-h-screen w-full max-w-[100vw] overflow-x-hidden relative bg-[#050811] text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-black">
       {/* Top Institutional Header */}
       <Header
         currentLang={currentLang}

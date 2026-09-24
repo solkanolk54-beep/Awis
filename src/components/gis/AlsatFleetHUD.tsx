@@ -220,7 +220,13 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
       </div>
 
       {/* Content Body */}
-      <div className="p-3 space-y-3 overflow-y-auto max-h-[60vh] text-xs">
+      <div 
+        className="p-3 space-y-3 overflow-y-auto max-h-[60vh] text-xs transform-gpu will-change-transform"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          touchAction: 'pan-y'
+        }}
+      >
         {/* Layer Display Controls */}
         <div className="p-2 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5 font-mono text-[11px]">
           <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">
