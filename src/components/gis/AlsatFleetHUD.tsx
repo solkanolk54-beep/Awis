@@ -25,11 +25,15 @@ import {
   AlsatNdviPassData, 
   Language 
 } from '../../types';
-import { ALSAT_FLEET_REGISTRY } from '../../services/alsatTrackingService';
+import { 
+  ALSAT_FLEET_REGISTRY, 
+  computeAlsatPositionAtTime, 
+  DEFAULT_ALSAT_PASSES 
+} from '../../services/alsatTrackingService';
 
 export interface AlsatFleetHUDProps {
-  positions: Record<AlsatSatelliteId, AlsatRealtimePosition>;
-  passes: AlsatNdviPassData[];
+  positions?: Record<AlsatSatelliteId, AlsatRealtimePosition> | null;
+  passes?: AlsatNdviPassData[] | null;
   selectedSatelliteId?: AlsatSatelliteId | 'ALL';
   selectedSatellite?: AlsatSatelliteId | 'ALL';
   selectedPassId?: string | null;
@@ -84,6 +88,34 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
   const [activeTab, setActiveTab] = useState<'fleet' | 'passes' | 'specifications'>('fleet');
   const satellites: AlsatSatelliteId[] = ['ALSAT-1B', 'ALSAT-2A', 'ALSAT-2B'];
 
+  // Guarantee valid position telemetry even if feed is undefined or empty
+  const safePositions = React.useMemo(() => {
+    const now = new Date();
+    const fallback: Record<AlsatSatelliteId, AlsatRealtimePosition> = {
+      'ALSAT-1B': computeAlsatPositionAtTime('ALSAT-1B', now),
+      'ALSAT-2A': computeAlsatPositionAtTime('ALSAT-2A', now),
+      'ALSAT-2B': computeAlsatPositionAtTime('ALSAT-2B', now)
+    };
+
+    if (!positions || Object.keys(positions).length === 0) {
+      return fallback;
+    }
+
+    return {
+      'ALSAT-1B': positions['ALSAT-1B'] || fallback['ALSAT-1B'],
+      'ALSAT-2A': positions['ALSAT-2A'] || fallback['ALSAT-2A'],
+      'ALSAT-2B': positions['ALSAT-2B'] || fallback['ALSAT-2B']
+    };
+  }, [positions]);
+
+  // Guarantee valid pass data array
+  const safePasses = React.useMemo(() => {
+    if (!passes || passes.length === 0) {
+      return DEFAULT_ALSAT_PASSES;
+    }
+    return passes;
+  }, [passes]);
+
   const activeSatelliteId = satIdProp ?? satProp ?? 'ALL';
   const effectiveShowTracks = tracksProp ?? showTracks ?? true;
   const effectiveToggleTracks = onToggleOrbitalTracks ?? onToggleTracks ?? (() => {});
@@ -92,7 +124,7 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
   const effectiveShowFootprints = footprintsProp ?? showFootprints ?? true;
   const effectiveToggleFootprints = onToggleNdviFootprints ?? onToggleFootprints ?? (() => {});
 
-  const currentSelectedPass = passProp ?? (selectedPassId ? passes.find(p => p.id === selectedPassId) || null : null);
+  const currentSelectedPass = passProp ?? (selectedPassId ? safePasses.find(p => p.id === selectedPassId) || null : null);
 
   // Tactical keyboard shortcut: Dismiss ALSAT HUD on Escape key
   useEffect(() => {
@@ -108,7 +140,7 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
   return (
     <div 
       id="alsat-fleet-hud-modal"
-      className="fixed top-16 md:top-20 end-4 sm:end-6 z-[9999] w-[calc(100vw-2rem)] sm:w-96 max-h-[85vh] bg-slate-900/98 border border-emerald-500/60 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 ring-1 ring-emerald-500/40 relative"
+      className="fixed top-16 md:top-20 end-4 sm:end-6 z-[9999] w-[calc(100vw-2rem)] sm:w-96 max-h-[85vh] bg-slate-900/98 border border-emerald-500/60 rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 ring-1 ring-emerald-500/40 pointer-events-auto"
       style={{ zIndex: 9999 }}
     >
       {/* HUD Header */}
@@ -228,7 +260,7 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
         {activeTab === 'fleet' && (
           <div className="space-y-2.5">
             {satellites.map((satId) => {
-              const pos = positions[satId];
+              const pos = safePositions[satId];
               const tle = ALSAT_FLEET_REGISTRY[satId];
               const isSelected = activeSatelliteId === satId;
 
@@ -289,10 +321,10 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
           <div className="space-y-2">
             <div className="text-[11px] text-slate-400 flex items-center justify-between">
               <span>{isAr ? 'التغطيات الفضائية المتاحة في IndexedDB' : 'Cached ALSAT NDVI Passes in IDB'}:</span>
-              <span className="text-emerald-400 font-mono font-bold">{passes.length} {isAr ? 'تغطية' : 'passes'}</span>
+              <span className="text-emerald-400 font-mono font-bold">{safePasses.length} {isAr ? 'تغطية' : 'passes'}</span>
             </div>
 
-            {passes.map((pass) => {
+            {safePasses.map((pass) => {
               const isSelected = currentSelectedPass?.id === pass.id;
               const meanVal = pass.ndviStats?.meanNdvi ?? 0.4;
               const ndviColor = meanVal < 0.35 ? 'text-red-400' : meanVal < 0.50 ? 'text-amber-400' : 'text-emerald-400';

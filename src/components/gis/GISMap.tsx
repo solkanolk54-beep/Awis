@@ -117,6 +117,8 @@ import { TerrainSteepnessHUD } from './TerrainSteepnessHUD';
 import { DroneMissionHUD } from './DroneMissionHUD';
 import { AlsatFleetOverlay } from './AlsatFleetOverlay';
 import { AlsatFleetHUD } from './AlsatFleetHUD';
+import { AlSatControlModal } from './AlSatControlModal';
+import { SatelliteStreamCard } from './SatelliteStreamCard';
 import { 
   fetchAlsatFleetPositions, 
   computeAlsatPositionAtTime,
@@ -4884,133 +4886,32 @@ export const GISMap: React.FC<GISMapProps> = ({
                 zIndex: 9999
               }}
             >
-              <div className="leaflet-popup-content-wrapper bg-slate-900/98 text-slate-100 border border-emerald-500/70 rounded-2xl shadow-[0_25px_60px_-10px_rgba(0,0,0,0.9)] backdrop-blur-2xl p-3.5 w-76 sm:w-84 font-sans relative ring-1 ring-emerald-500/50">
-                {/* Header with Satellite badge & Dismiss button */}
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center">
-                      <Satellite className="w-4 h-4 animate-pulse" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono font-bold text-white text-xs">{satName}</span>
-                        <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
-                          ASAL
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-400">
-                        {currentLang === 'ar' ? 'الوكالة الفضائية الجزائرية' : 'Algerian Space Agency'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {isOverAlgeria ? (
-                      <span className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        {currentLang === 'ar' ? 'فوق الجزائر' : 'Over Algeria'}
-                      </span>
-                    ) : (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-800 font-mono">
-                        {currentLang === 'ar' ? 'في المدار LEO' : 'In LEO Orbit'}
-                      </span>
-                    )}
-                    <button
-                      id="btn-close-alsat-leaflet-popup"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedAlsatSatellite('ALL');
-                        setSelectedAlsatPass(null);
-                        setShowAlsatHUD(false);
-                        window.dispatchEvent(new Event('resize'));
-                        const container = document.getElementById('gis-map-container');
-                        if (container) {
-                          container.style.pointerEvents = 'auto';
-                          container.style.filter = 'none';
-                        }
-                      }}
-                      className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/90 hover:bg-rose-950/80 border border-slate-700/80 hover:border-rose-500/70 text-slate-300 hover:text-rose-200 transition-all shadow cursor-pointer group"
-                      title={currentLang === 'ar' ? 'إغلاق النافذة التفاعلية (مفتاح Esc)' : 'Close Popup (Esc key)'}
-                      aria-label={currentLang === 'ar' ? 'إغلاق نافذة القمر' : 'Close satellite popup'}
-                    >
-                      <span className="text-[9px] font-mono font-bold text-slate-400 group-hover:text-rose-300">ESC</span>
-                      <X className="w-3.5 h-3.5 text-slate-300 group-hover:text-rose-300 group-hover:scale-110 transition-transform" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Sub-satellite coordinates & instantaneous telemetry */}
-                <div className="grid grid-cols-2 gap-1.5 p-2 rounded-xl bg-slate-950/70 border border-slate-800/80 font-mono text-[10px] mb-2.5">
-                  <div>
-                    <span className="text-slate-500 block">{currentLang === 'ar' ? 'الموقع الفضائي' : 'Sub-Sat Point'}:</span>
-                    <span className="text-emerald-300 font-semibold">{popupLat.toFixed(2)}°N, {popupLng.toFixed(2)}°E</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">{currentLang === 'ar' ? 'الارتفاع المداري' : 'Altitude'}:</span>
-                    <span className="text-slate-200">{altitude} km</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">{currentLang === 'ar' ? 'السرعة اللحظية' : 'Velocity'}:</span>
-                    <span className="text-slate-200">{velocity} km/s</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">{currentLang === 'ar' ? 'عرض المسح (Swath)' : 'Swath Width'}:</span>
-                    <span className="text-slate-200">{swath} km</span>
-                  </div>
-                </div>
-
-                {/* Selected NDVI Pass Info (if pass is clicked) */}
-                {selectedAlsatPass && (
-                  <div className="p-2 rounded-xl bg-emerald-950/30 border border-emerald-600/30 text-[10px] mb-2.5 space-y-1">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-semibold">{currentLang === 'ar' ? 'بصمة مسح الغابات (NDVI):' : 'Forest NDVI Pass:'}</span>
-                      <span className="font-mono text-emerald-300">
-                        {currentLang === 'ar' ? (selectedAlsatPass.wilayaTargetAr || selectedAlsatPass.wilayaTarget) : selectedAlsatPass.wilayaTarget}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between font-mono">
-                      <span className="text-slate-400">Mean NDVI:</span>
-                      <span className={`font-bold ${
-                        (selectedAlsatPass.ndviStats?.meanNdvi ?? 0.4) < 0.35 
-                          ? 'text-red-400' 
-                          : (selectedAlsatPass.ndviStats?.meanNdvi ?? 0.4) < 0.50 
-                          ? 'text-amber-400' 
-                          : 'text-emerald-400'
-                      }`}>
-                        {(selectedAlsatPass.ndviStats?.meanNdvi ?? 0.4).toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between font-mono text-slate-400">
-                      <span>Cloud Cover:</span>
-                      <span>{selectedAlsatPass.cloudCoverPercent}%</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action CTA Buttons */}
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowAlsatHUD(true);
-                    }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-[11px] shadow-lg shadow-emerald-950/50 cursor-pointer transition transform active:scale-95"
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                    <span>{currentLang === 'ar' ? 'فتح لوحة القيادة (HUD)' : 'Open ALSAT HUD'}</span>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setZoom(2.4);
-                      setPan({ x: 500 - rawPt.x * 2.4, y: 325 - rawPt.y * 2.4 });
-                    }}
-                    className="p-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-mono transition cursor-pointer"
-                    title={currentLang === 'ar' ? 'تمركز على القمر' : 'Center on Satellite'}
-                  >
-                    <Crosshair className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              <div className="relative">
+                <SatelliteStreamCard
+                  satelliteId={satName}
+                  position={alsatPositions[satName]}
+                  pass={selectedAlsatPass}
+                  isOverAlgeria={isOverAlgeria}
+                  currentLang={currentLang}
+                  onOpenHud={() => {
+                    setShowAlsatHUD(true);
+                  }}
+                  onCenter={() => {
+                    setZoom(2.4);
+                    setPan({ x: 500 - rawPt.x * 2.4, y: 325 - rawPt.y * 2.4 });
+                  }}
+                  onClose={() => {
+                    setSelectedAlsatSatellite('ALL');
+                    setSelectedAlsatPass(null);
+                    setShowAlsatHUD(false);
+                    window.dispatchEvent(new Event('resize'));
+                    const container = document.getElementById('gis-map-container');
+                    if (container) {
+                      container.style.pointerEvents = 'auto';
+                      container.style.filter = 'none';
+                    }
+                  }}
+                />
 
                 {/* Leaflet Popup Tip (Anchor Arrow pointing to satellite marker) */}
                 <div 
@@ -6007,7 +5908,8 @@ export const GISMap: React.FC<GISMapProps> = ({
 
       {/* Algerian Space Agency (ASAL) ALSAT Fleet Command HUD (rendered in front of backdrop at z-index: 9999) */}
       {showAlsatHUD && (
-        <AlsatFleetHUD
+        <AlSatControlModal
+          isOpen={showAlsatHUD}
           positions={alsatPositions}
           passes={alsatPasses}
           selectedSatellite={selectedAlsatSatellite}

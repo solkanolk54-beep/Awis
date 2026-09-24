@@ -17,8 +17,10 @@ import {
   X,
   Layers,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  SlidersHorizontal
 } from 'lucide-react';
+import { AlSatControlModal } from './AlSatControlModal';
 import { 
   FirmsDetection, 
   getFirmsApiKey, 
@@ -65,6 +67,7 @@ export const LiveSatelliteModal: React.FC<LiveSatelliteModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [liveWeather, setLiveWeather] = useState<AlgeriaLiveWeather | null>(null);
   const [loadingWeather, setLoadingWeather] = useState<boolean>(false);
+  const [isAlsatHudOpen, setIsAlsatHudOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -277,6 +280,37 @@ export const LiveSatelliteModal: React.FC<LiveSatelliteModalProps> = ({
                 {coverage === 'national' ? 'BBOX [-8.7..12.0]' : 'BBOX [-2.5..9.5]'}
               </div>
             </div>
+          </div>
+
+          {/* ALSAT Algerian Space Agency Integration Banner */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-emerald-950/70 border border-emerald-500/50 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                <Satellite className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-white">
+                    {isAr ? 'كوكبة ALSAT الفضائية الجزائرية (ASAL)' : 'Algerian Space Agency (ASAL ALSAT Fleet)'}
+                  </span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                    ALSAT-1B / 2A / 2B
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                  {isAr ? 'الاستشعار الطيفي المتعدد، بصمة NDVI للكتلة الحيوية، والمسار المداري' : 'Multispectral NDVI, Biomass Moisture Index & Orbital Pass Tracking'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="btn-open-alsat-hud-from-firms"
+              onClick={() => setIsAlsatHudOpen(true)}
+              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer transition transform active:scale-95 shrink-0"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              <span>{isAr ? 'فتح لوحة القيادة (HUD)' : 'Open ALSAT HUD'}</span>
+            </button>
           </div>
 
           {/* NASA FIRMS Key Management & Activation Form */}
@@ -538,6 +572,15 @@ export const LiveSatelliteModal: React.FC<LiveSatelliteModalProps> = ({
         </div>
 
       </div>
+
+      {/* ALSAT Tactical Command HUD Modal Host */}
+      {isAlsatHudOpen && (
+        <AlSatControlModal
+          isOpen={isAlsatHudOpen}
+          onClose={() => setIsAlsatHudOpen(false)}
+          currentLang={currentLang}
+        />
+      )}
     </div>
   );
 };
