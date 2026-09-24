@@ -17,8 +17,10 @@ import {
   AlsatNdviPassData, 
   Language 
 } from '../../types';
-import { computeAlsatPositionAtTime } from '../../services/alsatTrackingService';
-import { AlSatControlModal } from './AlSatControlModal';
+import { 
+  computeAlsatPositionAtTime 
+} from '../../services/alsatTrackingService';
+import { SatelliteHudModal } from './AlSatControlModal';
 
 export interface SatelliteStreamCardProps {
   satelliteId: AlsatSatelliteId;
@@ -46,7 +48,7 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
   isEmbedded = false
 }) => {
   const isAr = currentLang === 'ar';
-  const [isHudOpen, setIsHudOpen] = useState(false);
+  const [isHudOpen, setIsHudOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Guarantee valid position telemetry even if feed is undefined
@@ -68,20 +70,20 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
   const handleLaunchHud = (e: React.MouseEvent) => {
     e.stopPropagation();
 
-    // 1. Primary execution: call parent onOpenHud if provided
-    if (typeof onOpenHud === 'function') {
-      onOpenHud();
-    }
-
-    // 2. Also toggle internal isHudOpen state as a guaranteed fallback
-    setIsHudOpen(true);
-
-    // 3. Operational toast feedback confirmation
+    // 1. إظهار إشعار التأكيد
     const text = isAr
       ? 'تم فتح لوحة القيادة التكتيكية (HUD) لمحاكاة السطح الميداني لأقمار ALSAT'
       : 'ALSAT Tactical Surface HUD Activated';
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), 3500);
+
+    // 2. تغيير الحالة لفتح اللوحة
+    setIsHudOpen(true);
+
+    // 3. إعلام المكون الأب إذا توفر
+    if (typeof onOpenHud === 'function') {
+      onOpenHud();
+    }
   };
 
   return (
@@ -230,14 +232,15 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
         </div>
       </div>
 
-      {/* Standalone Fallback Modal: rendered if isHudOpen and no parent handler intercepted */}
-      {isHudOpen && !onOpenHud && (
-        <AlSatControlModal
+      {/* Tactical ALSAT Surface Simulation HUD Modal (Mounted via Portal at fixed z-index: 9999) */}
+      {isHudOpen && (
+        <SatelliteHudModal
           isOpen={isHudOpen}
           onClose={() => setIsHudOpen(false)}
-          currentLang={currentLang}
-          selectedSatellite={satelliteId}
+          satellite={satelliteId}
+          selectedSat={satelliteId}
           selectedPass={pass}
+          currentLang={currentLang}
         />
       )}
     </>

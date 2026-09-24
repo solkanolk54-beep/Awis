@@ -2,6 +2,7 @@
 // Manages real-time/simulation state and provides resilient fallback handling with toast notifications
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   AlsatSatelliteId, 
   AlsatRealtimePosition, 
@@ -18,7 +19,9 @@ import { CheckCircle2, ShieldCheck, X } from 'lucide-react';
 export interface AlSatControlModalProps {
   isOpen?: boolean;
   onClose: () => void;
-  currentLang: Language;
+  currentLang?: Language;
+  satellite?: AlsatSatelliteId | 'ALL';
+  selectedSat?: AlsatSatelliteId | 'ALL';
   positions?: Record<AlsatSatelliteId, AlsatRealtimePosition> | null;
   passes?: AlsatNdviPassData[] | null;
   selectedSatellite?: AlsatSatelliteId | 'ALL';
@@ -46,7 +49,9 @@ export interface AlSatControlModalProps {
 export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   isOpen = true,
   onClose,
-  currentLang,
+  currentLang = 'ar',
+  satellite,
+  selectedSat,
   positions,
   passes,
   selectedSatellite,
@@ -72,6 +77,8 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
 }) => {
   const isAr = currentLang === 'ar';
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const activeSatellite = satellite ?? selectedSat ?? selectedSatellite ?? selectedSatelliteId ?? 'ALL';
 
   // Fallback Telemetry Generation (Ensures HUD NEVER fails even if parent feed is undefined/empty)
   const safePositions = useMemo(() => {
@@ -122,13 +129,21 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
-    <>
+  const content = (
+    <div id="alsat-hud-modal-root" className="fixed inset-0 z-[9999] pointer-events-none">
+      {/* Semi-transparent tactical backdrop */}
+      <div 
+        id="alsat-hud-modal-backdrop"
+        onClick={onClose}
+        className="fixed inset-0 z-[9998] bg-black/40 backdrop-blur-[2px] transition-all duration-200 animate-in fade-in cursor-pointer pointer-events-auto"
+        aria-label={isAr ? 'إغلاق لوحة القيادة' : 'Dismiss HUD'}
+      />
+
       {/* Toast Feedback Notification Banner */}
       {toastMessage && (
         <div 
           id="alsat-tactical-toast-banner"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[10005] px-4 py-2 rounded-xl bg-slate-950/95 border border-emerald-500/80 shadow-[0_10px_30px_rgba(16,185,129,0.35)] backdrop-blur-md flex items-center gap-2.5 text-xs text-white animate-in slide-in-from-top duration-300"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[10005] px-4 py-2 rounded-xl bg-slate-950/95 border border-emerald-500/80 shadow-[0_10px_30px_rgba(16,185,129,0.35)] backdrop-blur-md flex items-center gap-2.5 text-xs text-white animate-in slide-in-from-top duration-300 pointer-events-auto"
         >
           <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -136,7 +151,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
           <span className="font-semibold text-emerald-200">{toastMessage}</span>
           <button 
             onClick={() => setToastMessage(null)}
-            className="text-slate-400 hover:text-white p-0.5 ml-1 transition"
+            className="text-slate-400 hover:text-white p-0.5 ml-1 transition cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -144,34 +159,41 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
       )}
 
       {/* Render the Master Tactical HUD with guaranteed defined properties */}
-      <AlsatFleetHUD
-        positions={safePositions}
-        passes={safePasses}
-        selectedSatellite={selectedSatellite ?? selectedSatelliteId ?? 'ALL'}
-        selectedSatelliteId={selectedSatelliteId ?? selectedSatellite ?? 'ALL'}
-        selectedPassId={selectedPassId ?? (selectedPass?.id || null)}
-        selectedPass={selectedPass ?? null}
-        onSelectSatellite={onSelectSatellite || (() => {})}
-        onSelectPass={onSelectPass || (() => {})}
-        showTracks={showTracks ?? showOrbitalTracks ?? true}
-        showOrbitalTracks={showOrbitalTracks ?? showTracks ?? true}
-        onToggleTracks={onToggleTracks || onToggleOrbitalTracks || (() => {})}
-        onToggleOrbitalTracks={onToggleOrbitalTracks || onToggleTracks || (() => {})}
-        showSwaths={showSwaths ?? showSwathCorridors ?? true}
-        showSwathCorridors={showSwathCorridors ?? showSwaths ?? true}
-        onToggleSwaths={onToggleSwaths || onToggleSwathCorridors || (() => {})}
-        onToggleSwathCorridors={onToggleSwathCorridors || onToggleSwaths || (() => {})}
-        showFootprints={showFootprints ?? showNdviFootprints ?? true}
-        showNdviFootprints={showNdviFootprints ?? showFootprints ?? true}
-        onToggleFootprints={onToggleFootprints || onToggleNdviFootprints || (() => {})}
-        onToggleNdviFootprints={onToggleNdviFootprints || onToggleFootprints || (() => {})}
-        onRefreshTelemetry={onRefreshTelemetry || (() => {})}
-        onClose={onClose}
-        currentLang={currentLang}
-        isOnline={isOnline}
-      />
-    </>
+      <div className="fixed top-16 md:top-20 end-4 sm:end-6 z-[9999] pointer-events-auto">
+        <AlsatFleetHUD
+          positions={safePositions}
+          passes={safePasses}
+          selectedSatellite={activeSatellite}
+          selectedSatelliteId={activeSatellite}
+          selectedPassId={selectedPassId ?? (selectedPass?.id || null)}
+          selectedPass={selectedPass ?? null}
+          onSelectSatellite={onSelectSatellite || (() => {})}
+          onSelectPass={onSelectPass || (() => {})}
+          showTracks={showTracks ?? showOrbitalTracks ?? true}
+          showOrbitalTracks={showOrbitalTracks ?? showTracks ?? true}
+          onToggleTracks={onToggleTracks || onToggleOrbitalTracks || (() => {})}
+          onToggleOrbitalTracks={onToggleOrbitalTracks || onToggleTracks || (() => {})}
+          showSwaths={showSwaths ?? showSwathCorridors ?? true}
+          showSwathCorridors={showSwathCorridors ?? showSwaths ?? true}
+          onToggleSwaths={onToggleSwaths || onToggleSwathCorridors || (() => {})}
+          onToggleSwathCorridors={onToggleSwathCorridors || onToggleSwaths || (() => {})}
+          showFootprints={showFootprints ?? showNdviFootprints ?? true}
+          showNdviFootprints={showNdviFootprints ?? showFootprints ?? true}
+          onToggleFootprints={onToggleFootprints || onToggleNdviFootprints || (() => {})}
+          onToggleNdviFootprints={onToggleNdviFootprints || onToggleFootprints || (() => {})}
+          onRefreshTelemetry={onRefreshTelemetry || (() => {})}
+          onClose={onClose}
+          currentLang={currentLang}
+          isOnline={isOnline}
+        />
+      </div>
+    </div>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(content, document.body);
+  }
+  return content;
 };
 
 // Tactical Aliases for interoperability across modules
