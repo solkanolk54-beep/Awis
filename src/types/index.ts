@@ -596,3 +596,23 @@ export interface AlsatNdviPassData {
   cachedInIndexedDb: boolean;
   timestampSaved: string;
 }
+
+export interface AlsatPredictedPass {
+  id: string;
+  satelliteId: AlsatSatelliteId;
+  nextPassTime: string; // ISO String
+  passEndTime: string;  // ISO String
+  durationSeconds: number;
+  maxElevationAngle: number;
+  isDirectOverMila: boolean;
+  targetZoneName: string;
+  targetZoneNameAr: string;
+  sensorType: string;
+  sensorResolution: string;
+  swathWidthKm: number;
+  orbitDirection: 'Ascending' | 'Descending';
+  closestDistanceKm: number;
+  subSatelliteLatitude: number;
+  subSatelliteLongitude: number;
+  isArmed?: boolean;
+}

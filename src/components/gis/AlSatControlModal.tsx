@@ -27,6 +27,7 @@ export interface AlSatControlModalProps {
   selectedSatellite?: AlsatSatelliteId | 'ALL';
   selectedSatelliteId?: AlsatSatelliteId | 'ALL';
   onSelectSatellite?: (id: AlsatSatelliteId | 'ALL') => void;
+  initialTab?: 'fleet' | 'warning' | 'globe' | 'passes' | 'predictor' | 'split' | 'specifications';
   selectedPassId?: string | null;
   selectedPass?: AlsatNdviPassData | null;
   onSelectPass?: (pass: AlsatNdviPassData | null) => void;
@@ -58,6 +59,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   selectedSatellite,
   selectedSatelliteId,
   onSelectSatellite,
+  initialTab,
   selectedPassId,
   selectedPass,
   onSelectPass,
@@ -116,7 +118,7 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
   const content = (
     <div 
       id="alsat-hud-modal-root" 
-      className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 touch-none will-change-transform transform-gpu"
+      className="fixed inset-0 z-[99999] w-screen h-screen max-w-[100dvw] max-h-[100dvh] bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 touch-none will-change-transform transform-gpu overflow-hidden"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -145,10 +147,11 @@ export const AlSatControlModal: React.FC<AlSatControlModalProps> = ({
       {/* صندوق المودال الرئيسي */}
       <div 
         id="alsat-hud-modal-content"
-        className="relative w-full max-w-2xl max-h-[85dvh] bg-slate-900 border border-emerald-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto ring-1 ring-emerald-500/30 will-change-transform transform-gpu"
+        className="relative w-full max-w-4xl max-h-[90dvh] bg-slate-900 border border-emerald-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto ring-1 ring-emerald-500/30 will-change-transform transform-gpu"
         onClick={(e) => e.stopPropagation()}
       >
         <AlsatFleetHUD
+          initialTab={initialTab}
           positions={safePositions}
           passes={safePasses}
           selectedSatellite={activeSatellite}

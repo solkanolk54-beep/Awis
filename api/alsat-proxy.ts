@@ -143,6 +143,126 @@ alsatProxyRouter.get('/positions', (req: Request, res: Response) => {
 });
 
 /**
+ * 2.5 Orbital Pass Predictor Endpoint for Mila Direct Sector & Northern Algeria
+ * SGP4 Angular Tracking & Swath Corridor Spatial Intersection
+ */
+alsatProxyRouter.get('/predictions', (req: Request, res: Response) => {
+  const satFilter = (req.query.satellite as string) || 'ALL';
+  const targetFilter = (req.query.zone as string) || 'ALL';
+  const days = Math.min(7, Math.max(1, parseInt(req.query.days as string, 10) || 5));
+  const now = new Date();
+  const nowMs = now.getTime();
+  const endMs = nowMs + (days * 24 * 60 * 60 * 1000);
+
+  const satList: Array<'ALSAT-1B' | 'ALSAT-2A' | 'ALSAT-2B'> = 
+    satFilter === 'ALSAT-1B' ? ['ALSAT-1B'] :
+    satFilter === 'ALSAT-2A' ? ['ALSAT-2A'] :
+    satFilter === 'ALSAT-2B' ? ['ALSAT-2B'] :
+    ['ALSAT-1B', 'ALSAT-2A', 'ALSAT-2B'];
+
+  const MILA_CENTER = { lat: 36.475, lng: 6.275 };
+  const SENSOR_META = {
+    'ALSAT-1B': { swathKm: 150, type: 'MSI 12m (Green-NIR) / 24m Wide', res: '12m Multispectral' },
+    'ALSAT-2A': { swathKm: 30, type: 'NAOMI 2.5m PAN / 10m MS', res: '2.5m High-Res Optical' },
+    'ALSAT-2B': { swathKm: 30, type: 'NAOMI 2.5m PAN / 10m MS', res: '2.5m High-Res Optical' }
+  };
+
+  function haversineDist(lat1: number, lon1: number, lat2: number, lon2: number) {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  const predictions: any[] = [];
+
+  for (const satId of satList) {
+    const periodMs = (satId === 'ALSAT-1B' ? 97.7 : 97.4) * 60 * 1000;
+    const meta = SENSOR_META[satId];
+    let curOrbitMs = nowMs - (nowMs % periodMs);
+
+    while (curOrbitMs <= endMs) {
+      const orbitEnd = curOrbitMs + periodMs;
+      let minMilaDist = Infinity;
+      let bestTimeMs = 0;
+      let bestLat = 0;
+      let bestLng = 0;
+      let isDescending = false;
+
+      for (let t = curOrbitMs; t < orbitEnd; t += 75000) {
+        if (t < nowMs - 600000) continue;
+        const pos = computePosition(satId, new Date(t));
+        if (pos.latitude >= 33.5 && pos.latitude <= 38.0 && pos.longitude >= -4.0 && pos.longitude <= 10.5) {
+          const dist = haversineDist(pos.latitude, pos.longitude, MILA_CENTER.lat, MILA_CENTER.lng);
+          if (dist < minMilaDist) {
+            minMilaDist = dist;
+            bestTimeMs = t;
+            bestLat = pos.latitude;
+            bestLng = pos.longitude;
+            const nextP = computePosition(satId, new Date(t + 30000));
+            isDescending = nextP.latitude < pos.latitude;
+          }
+        }
+      }
+
+      if (bestTimeMs > nowMs - 300000 && minMilaDist < 1200) {
+        const isDirectOverMila = minMilaDist <= (meta.swathKm / 2 + 22);
+        const isOverNorthern = bestLng >= -3.2 && bestLng <= 9.7;
+
+        if (isDirectOverMila || isOverNorthern) {
+          if (targetFilter === 'MILA_ONLY' && !isDirectOverMila) {
+            curOrbitMs += periodMs;
+            continue;
+          }
+
+          const alpha = minMilaDist / 6371;
+          const elevRad = Math.atan2(Math.cos(alpha) - (6371 / (6371 + 675)), Math.sin(alpha));
+          const maxElevationAngle = Math.max(14, Math.min(89, Math.round((elevRad * 180) / Math.PI)));
+          const durationSeconds = Math.round(510 + ((maxElevationAngle / 90) * 160));
+          const passStartMs = bestTimeMs - Math.round((durationSeconds / 2) * 1000);
+          const passEndMs = passStartMs + (durationSeconds * 1000);
+
+          predictions.push({
+            id: `PASS-${satId}-${Math.round(bestTimeMs / 1000)}`,
+            satelliteId: satId,
+            nextPassTime: new Date(passStartMs).toISOString(),
+            passEndTime: new Date(passEndMs).toISOString(),
+            durationSeconds,
+            maxElevationAngle,
+            isDirectOverMila,
+            targetZoneName: isDirectOverMila ? 'Mila Direct Sector' : 'Northern Algeria Band',
+            targetZoneNameAr: isDirectOverMila ? 'قطاع ولاية ميلة المباشر' : 'الشريط الشمالي للجزائر',
+            sensorType: meta.type,
+            sensorResolution: meta.res,
+            swathWidthKm: meta.swathKm,
+            orbitDirection: isDescending ? 'Descending' : 'Ascending',
+            closestDistanceKm: Number(minMilaDist.toFixed(1)),
+            subSatelliteLatitude: Number(bestLat.toFixed(2)),
+            subSatelliteLongitude: Number(bestLng.toFixed(2))
+          });
+        }
+      }
+      curOrbitMs += periodMs;
+    }
+  }
+
+  predictions.sort((a, b) => new Date(a.nextPassTime).getTime() - new Date(b.nextPassTime).getTime());
+
+  res.json({
+    status: 'ok',
+    totalPasses: predictions.length,
+    generatedAt: now.toISOString(),
+    filter: { satellite: satFilter, zone: targetFilter, days },
+    passes: predictions
+  });
+});
+
+
+/**
  * 3. High-resolution ALSAT multispectral passes catalog
  */
 alsatProxyRouter.get('/passes', (req: Request, res: Response) => {

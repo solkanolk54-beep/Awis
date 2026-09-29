@@ -81,8 +81,8 @@ export const SatelliteStreamCard: React.FC<SatelliteStreamCardProps> = ({
 
     // 1. إظهار إشعار التأكيد
     const text = isAr
-      ? 'تم فتح لوحة القيادة التكتيكية (HUD) لمحاكاة السطح الميداني لأقمار ALSAT'
-      : 'ALSAT Tactical Surface HUD Activated';
+      ? 'تم فتح لوحة القيادة التكتيكية...'
+      : 'ALSAT Fleet Tactical HUD Activated';
     setToastMessage(text);
     setTimeout(() => setToastMessage(null), 3500);
 

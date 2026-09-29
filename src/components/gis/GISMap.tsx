@@ -37,7 +37,8 @@ import {
   X,
   CheckCircle2,
   Truck,
-  Zap
+  Zap,
+  Globe
 } from 'lucide-react';
 import { 
   WildfireIncident, 
@@ -119,6 +120,7 @@ import { AlsatFleetOverlay } from './AlsatFleetOverlay';
 import { AlsatFleetHUD } from './AlsatFleetHUD';
 import { AlSatControlModal } from './AlSatControlModal';
 import { SatelliteStreamCard } from './SatelliteStreamCard';
+import { AlsatPassPredictor } from './AlsatPassPredictor';
 import { 
   fetchAlsatFleetPositions, 
   computeAlsatPositionAtTime,
@@ -138,6 +140,14 @@ import {
   TerrainSteepnessCell, 
   CriticalEscarpmentZone 
 } from '../../services/terrainSteepnessService';
+import { WildfirePropagationSVG, WildfirePropagationHUD } from './WildfirePropagationOverlay';
+import { 
+  simulateWildfirePropagation, 
+  PropagationParams, 
+  PropagationSimulationResult 
+} from '../../services/WildfirePropagationEngine';
+import { TacticalMeshPanel } from './TacticalMeshPanel';
+import { tacticalMeshService, TacticalPeerUnit } from '../../services/TacticalMeshService';
 
 interface GISMapProps {
   incidents: WildfireIncident[];
@@ -319,13 +329,15 @@ export const GISMap: React.FC<GISMapProps> = ({
     physicalFireFront: false, // Toggleable Rothermel Physical Fire Front Simulation Layer
     fireFrontDynamics: false, // Toggleable Fire Front Dynamics Service & Active Expansion Edge Polyline
     terrainSteepnessHeatmap: false, // Toggleable Terrain Steepness & Firefighting Machinery Mobility Heatmap Layer (DEM)
-    alsatFleet: true // Toggleable Algerian Satellite Fleet (ALSAT-1B, ALSAT-2A, ALSAT-2B) Layer
+    alsatFleet: true, // Toggleable Algerian Satellite Fleet (ALSAT-1B, ALSAT-2A, ALSAT-2B) Layer
+    wildfirePropagation: false, // Toggleable Dynamic Cellular Automata Wildfire Propagation Layer
+    tacticalMesh: true // Toggleable Offline Tactical P2P Mesh & Friendly Force Tracking (FFT) Layer
   });
 
   // Centralized Mutual-Exclusivity Tactical HUD Manager:
   // Guarantees that at most ONE tactical analytical HUD is displayed at any time,
   // completely preventing visual clutter and overlapping stacked panels ("المواد المتراكمة فوق بعضها").
-  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources' | 'drone' | 'alsat';
+  type ActiveTacticalHUD = 'none' | 'projection' | 'evac' | 'frontDynamics' | 'rothermel' | 'advisor' | 'steepness' | 'resources' | 'drone' | 'alsat' | 'propagation' | 'mesh';
   const [activeHUD, setActiveHUD] = useState<ActiveTacticalHUD>('none');
 
   const showDroneHUD = activeHUD === 'drone';
@@ -401,6 +413,7 @@ export const GISMap: React.FC<GISMapProps> = ({
   }, []);
 
   const showAlsatHUD = activeHUD === 'alsat';
+  const [alsatInitialTab, setAlsatInitialTab] = useState<'fleet' | 'warning' | 'globe' | 'passes' | 'predictor' | 'split' | 'specifications'>('fleet');
   const setShowAlsatHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
     setActiveHUD((curr) => {
       const isCurr = curr === 'alsat';
@@ -408,6 +421,76 @@ export const GISMap: React.FC<GISMapProps> = ({
       return next ? 'alsat' : (isCurr ? 'none' : curr);
     });
   }, []);
+
+  const showPropagationHUD = activeHUD === 'propagation';
+  const setShowPropagationHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'propagation';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'propagation' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  const showMeshHUD = activeHUD === 'mesh';
+  const setShowMeshHUD = useCallback((action: boolean | ((prev: boolean) => boolean)) => {
+    setActiveHUD((curr) => {
+      const isCurr = curr === 'mesh';
+      const next = typeof action === 'function' ? action(isCurr) : action;
+      return next ? 'mesh' : (isCurr ? 'none' : curr);
+    });
+  }, []);
+
+  // Tactical Mesh Peers state for live Friendly Force Tracking (FFT) on GIS Map
+  const [meshPeers, setMeshPeers] = useState<TacticalPeerUnit[]>(() => tacticalMeshService.getAllPeers());
+  useEffect(() => {
+    const unsub = tacticalMeshService.subscribe(() => {
+      setMeshPeers(tacticalMeshService.getAllPeers());
+    });
+    return () => unsub();
+  }, []);
+
+  // --- Dynamic Cellular Automata Wildfire Propagation Engine State ---
+  const [propagationParams, setPropagationParams] = useState<PropagationParams>({
+    origin: { lat: 36.450, lng: 6.250 }, // Central Mila Forest (Mount Grouz)
+    originName: 'Mount Grouz Forest Reserve',
+    originNameAr: 'غابة جبل قروز - ولاية ميلة',
+    windSpeedKmH: 34,
+    windDirectionDegrees: 195, // SSW Sirocco
+    slopeDegrees: 22,
+    slopeAspectDegrees: 35,
+    ndvi: 0.22,
+    ambientTempC: 38,
+    relativeHumidity: 16
+  });
+  const [propagationMinute, setPropagationMinute] = useState<number>(30);
+  const [isPropagationPlaying, setIsPropagationPlaying] = useState<boolean>(false);
+  const [propagationSpeed, setPropagationSpeed] = useState<number>(1);
+
+  // Sync origin with selected incident if available
+  useEffect(() => {
+    if (selectedIncident?.coordinates) {
+      setPropagationParams((prev) => ({
+        ...prev,
+        origin: selectedIncident.coordinates,
+        originName: selectedIncident.title || prev.originName,
+        originNameAr: selectedIncident.titleAr || prev.originNameAr
+      }));
+    }
+  }, [selectedIncident]);
+
+  // Propagation simulation calculation memo
+  const wildfirePropagationResult = useMemo<PropagationSimulationResult>(() => {
+    return simulateWildfirePropagation(propagationParams);
+  }, [propagationParams]);
+
+  // Auto-advance loop when playing
+  useEffect(() => {
+    if (!isPropagationPlaying) return;
+    const interval = setInterval(() => {
+      setPropagationMinute((prev) => (prev >= 120 ? 0 : prev + 1));
+    }, 400 / propagationSpeed);
+    return () => clearInterval(interval);
+  }, [isPropagationPlaying, propagationSpeed]);
 
   // --- Smart Evacuation Planner State & Calculations ---
   const [selectedEvacSettlement, setSelectedEvacSettlement] = useState<CivilianSettlement>(AT_RISK_SETTLEMENTS[0]);
@@ -1106,8 +1189,6 @@ export const GISMap: React.FC<GISMapProps> = ({
   // Dedicated clean dismiss handler for ALSAT HUD that guarantees full brightness & reactivates map
   const handleCloseAlsatHUD = useCallback(() => {
     setShowAlsatHUD(false);
-    setSelectedAlsatSatellite('ALL');
-    setSelectedAlsatPass(null);
     // Instant map reactivation & viewport invalidation
     window.dispatchEvent(new Event('resize'));
     const container = document.getElementById('gis-map-container');
@@ -2087,6 +2168,106 @@ export const GISMap: React.FC<GISMapProps> = ({
             )}
           </div>
 
+          {/* Dynamic Cellular Automata Wildfire Propagation Quick-Toggle Pill */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-wildfire-propagation"
+              onClick={() => {
+                const next = !layers.wildfirePropagation;
+                toggleLayer('wildfirePropagation');
+                if (next) setShowPropagationHUD(true);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                layers.wildfirePropagation
+                  ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white shadow ring-1 ring-rose-400/60'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'محاكاة انتشار النيران بالخلية الذاتية (Cellular Automata) وحساب متجهات الرياح والانحدار وNDVI'
+                  : 'Dynamic Wildfire Propagation Simulation (Cellular Automata, Wind & Slope)'
+              }
+            >
+              <Flame className={`w-3.5 h-3.5 ${layers.wildfirePropagation ? 'text-rose-200 animate-pulse' : 'text-slate-400'}`} />
+              <span>{currentLang === 'ar' ? 'انتشار النيران' : 'Propagation'}</span>
+              <span
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono font-bold ${
+                  layers.wildfirePropagation
+                    ? 'bg-rose-950/90 text-rose-200 border border-rose-400/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {layers.wildfirePropagation ? `${propagationMinute}m` : 'CA'}
+              </span>
+            </button>
+
+            {layers.wildfirePropagation && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1" />
+                <button
+                  id="btn-toggle-propagation-hud"
+                  onClick={() => setShowPropagationHUD(!showPropagationHUD)}
+                  className={`p-1 rounded transition cursor-pointer ${
+                    showPropagationHUD ? 'bg-rose-950/90 text-rose-300 border border-rose-600/40' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={currentLang === 'ar' ? 'لوحة تحكم محاكاة انتشار النيران' : 'Toggle Propagation HUD'}
+                >
+                  <SlidersHorizontal className="w-3 h-3 text-rose-400" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Tactical Offline Mesh & Friendly Force Tracking (P2P FFT) Quick-Toggle Pill */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+            <button
+              id="btn-toggle-tactical-mesh"
+              onClick={() => {
+                const next = !layers.tacticalMesh;
+                toggleLayer('tacticalMesh');
+                if (next) setShowMeshHUD(true);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
+                layers.tacticalMesh
+                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow ring-1 ring-cyan-400/60'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'الشبكة التكتيكية الميدانية (P2P Mesh): تتبع القوات الصديقة (FFT)، البلاغات بدون إنترنت، ونداء الاستغاثة SOS'
+                  : 'Tactical Field P2P Mesh: Friendly Force Tracking (FFT) & Offline SOS'
+              }
+            >
+              <Radio className={`w-3.5 h-3.5 ${layers.tacticalMesh ? 'text-cyan-200 animate-pulse' : 'text-slate-400'}`} />
+              <span>{currentLang === 'ar' ? 'شبكة الميدان P2P' : 'Tactical Mesh'}</span>
+              <span
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono font-bold ${
+                  layers.tacticalMesh
+                    ? 'bg-cyan-950/90 text-cyan-200 border border-cyan-400/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {layers.tacticalMesh ? `${meshPeers.length} N` : 'OFF'}
+              </span>
+            </button>
+
+            {layers.tacticalMesh && (
+              <>
+                <div className="h-4 w-px bg-slate-700 mx-1" />
+                <button
+                  id="btn-toggle-mesh-hud"
+                  onClick={() => setShowMeshHUD(!showMeshHUD)}
+                  className={`p-1 rounded transition cursor-pointer ${
+                    showMeshHUD ? 'bg-cyan-950/90 text-cyan-300 border border-cyan-600/40' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={currentLang === 'ar' ? 'لوحة التنسيق اللاسلكي الميداني' : 'Toggle Mesh HUD'}
+                >
+                  <Radio className="w-3 h-3 text-cyan-400" />
+                </button>
+              </>
+            )}
+          </div>
+
           {/* Terrain Steepness Heatmap Quick-Toggle Pill (DEM Elevation & Machinery Risk) */}
           <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
             <button
@@ -2192,18 +2373,19 @@ export const GISMap: React.FC<GISMapProps> = ({
             </button>
           </div>
 
-          {/* ASAL ALSAT Fleet Integration HUD Quick-Launch Pill */}
-          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs">
+          {/* ASAL ALSAT Fleet Integration HUD Quick-Launch Pill with 2D / 3D Globe Toggle */}
+          <div className="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg p-0.5 text-xs gap-0.5">
             <button
               id="btn-toggle-alsat-fleet-hud"
               onClick={() => {
                 if (!layers.alsatFleet) {
                   setLayers(prev => ({ ...prev, alsatFleet: true }));
                 }
+                setAlsatInitialTab('fleet');
                 setShowAlsatHUD(!showAlsatHUD);
               }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded transition cursor-pointer font-semibold ${
-                showAlsatHUD
+                showAlsatHUD && alsatInitialTab !== 'globe'
                   ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow ring-1 ring-teal-400/60'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
@@ -2213,11 +2395,35 @@ export const GISMap: React.FC<GISMapProps> = ({
                   : 'Algerian Space Agency (ASAL) Satellite Fleet: Orbital tracks, NDVI footprints, and offline sync'
               }
             >
-              <Satellite className={`w-3.5 h-3.5 ${showAlsatHUD ? 'text-teal-300 animate-pulse' : 'text-teal-400'}`} />
+              <Satellite className={`w-3.5 h-3.5 ${showAlsatHUD && alsatInitialTab !== 'globe' ? 'text-teal-300 animate-pulse' : 'text-teal-400'}`} />
               <span>{currentLang === 'ar' ? 'أقمار ALSAT' : 'ALSAT Fleet'}</span>
               <span className="px-1.5 py-0.2 text-[9px] rounded-full font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
                 ASAL
               </span>
+            </button>
+
+            <button
+              id="btn-toggle-alsat-3d-globe"
+              onClick={() => {
+                if (!layers.alsatFleet) {
+                  setLayers(prev => ({ ...prev, alsatFleet: true }));
+                }
+                setAlsatInitialTab('globe');
+                setShowAlsatHUD(true);
+              }}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition cursor-pointer font-semibold ${
+                showAlsatHUD && alsatInitialTab === 'globe'
+                  ? 'bg-emerald-600 text-white shadow ring-1 ring-emerald-400/60'
+                  : 'text-emerald-400 hover:text-white hover:bg-slate-800'
+              }`}
+              title={
+                currentLang === 'ar'
+                  ? 'المحاكاة ثلاثية الأبعاد لمدارات أقمار ALSAT وتفاعلها مع الأرض وقطاع ميلة (3D WebGL Globe)'
+                  : '3D WebGL Globe: ALSAT orbits, sensor swath cones, and Mila sector'
+              }
+            >
+              <Globe className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
+              <span>{currentLang === 'ar' ? 'المدار 3D' : '3D Globe'}</span>
             </button>
           </div>
 
@@ -4780,6 +4986,18 @@ export const GISMap: React.FC<GISMapProps> = ({
             />
           )}
 
+          {/* 14c. Dynamic Cellular Automata Wildfire Propagation Layer (Wind + Topography + NDVI Isochrones) */}
+          {layers.wildfirePropagation && wildfirePropagationResult && (
+            <WildfirePropagationSVG
+              geoToSvg={geoToSvg}
+              simulationResult={wildfirePropagationResult}
+              currentMinute={propagationMinute}
+              showIsochrones={true}
+              showWindVector={true}
+              showEvacuationCorridors={true}
+            />
+          )}
+
           {/* 15. Smart Evacuation Routing & Road Network Layer */}
           {layers.evacuationPlanner && evacuationPlan && (
             <EvacuationRoutesLayer
@@ -4818,15 +5036,99 @@ export const GISMap: React.FC<GISMapProps> = ({
               geoToSvg={geoToSvg}
               onSelectSatellite={(satId) => {
                 setSelectedAlsatSatellite(satId);
-                setShowAlsatHUD(true);
               }}
               onSelectPass={(pass) => {
                 setSelectedAlsatPass(pass);
-                setShowAlsatHUD(true);
               }}
               currentLang={currentLang}
             />
           )}
+
+          {/* 17. Tactical P2P Mesh Friendly Force Tracking (FFT) Live Ground Units Layer */}
+          {layers.tacticalMesh && meshPeers.map(unit => {
+            const pt = geoToSvg(unit.coordinates.lat, unit.coordinates.lng);
+            const isSos = unit.status === 'sos';
+            const isLocal = unit.isLocalDevice;
+            const isArLang = currentLang === 'ar';
+
+            return (
+              <g 
+                key={`mesh-peer-${unit.id}`}
+                className="cursor-pointer transition-transform hover:scale-110"
+                onClick={() => {
+                  setShowMeshHUD(true);
+                  setZoom(2.4);
+                  setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+                }}
+              >
+                {/* SOS Distress Beacon Halo */}
+                {isSos && (
+                  <>
+                    <circle cx={pt.x} cy={pt.y} r="22" fill="#ef4444" fillOpacity="0.4" className="animate-ping" />
+                    <circle cx={pt.x} cy={pt.y} r="32" fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="3 3" className="animate-spin" />
+                  </>
+                )}
+
+                {/* Outer Circle based on unit type */}
+                <circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={isLocal ? "11" : "9.5"}
+                  fill={
+                    isSos 
+                      ? "#dc2626" 
+                      : unit.type === 'protection_civile' 
+                      ? "#ea580c" 
+                      : unit.type === 'forets' 
+                      ? "#16a34a" 
+                      : unit.type === 'command_truck' 
+                      ? "#d97706" 
+                      : "#0891b2"
+                  }
+                  stroke="#ffffff"
+                  strokeWidth={isLocal ? "2.5" : "1.8"}
+                  filter="drop-shadow(0 2px 4px rgba(0,0,0,0.6))"
+                />
+
+                {/* Internal Unit Symbol */}
+                <text
+                  x={pt.x}
+                  y={pt.y + 3.5}
+                  fill="#ffffff"
+                  fontSize="8"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                  pointerEvents="none"
+                >
+                  {isSos ? '!' : unit.type === 'forets' ? '🌲' : unit.type === 'command_truck' ? '⚡' : unit.type === 'ambulance' ? '✚' : '🚒'}
+                </text>
+
+                {/* Tactical Unit Name Tag */}
+                <g transform={`translate(${pt.x}, ${pt.y - 14})`}>
+                  <rect
+                    x="-42"
+                    y="-11"
+                    width="84"
+                    height="14"
+                    rx="4"
+                    fill="rgba(15, 23, 42, 0.92)"
+                    stroke={isSos ? "#ef4444" : isLocal ? "#06b6d4" : "#64748b"}
+                    strokeWidth="1"
+                  />
+                  <text
+                    x="0"
+                    y="-1"
+                    fill={isSos ? "#fca5a5" : "#f8fafc"}
+                    fontSize="6.5"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {isArLang ? (unit.callsign.length > 20 ? unit.callsign.slice(0, 19) + '…' : unit.callsign) : unit.id}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
         </g>
       </svg>
 
@@ -5303,6 +5605,42 @@ export const GISMap: React.FC<GISMapProps> = ({
           <span>{syncToastMessage}</span>
         </div>
       )}
+
+      {/* Persistent ALSAT HUD Quick-Access Trigger Button & Pass Predictor (Bottom Dock) - Always visible and accessible on mobile & desktop */}
+      <div 
+        id="alsat-persistent-dock-trigger"
+        className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-2 pointer-events-auto max-w-[95vw]"
+      >
+        <button
+          id="btn-bottom-alsat-hud"
+          onClick={() => {
+            setShowAlsatHUD(true);
+            setSyncToastMessage(
+              currentLang === 'ar'
+                ? 'تم فتح لوحة القيادة التكتيكية...'
+                : 'ALSAT Fleet Tactical HUD Activated'
+            );
+            setTimeout(() => setSyncToastMessage(null), 3500);
+          }}
+          className="relative z-40 flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:border-emerald-400/80 rounded-xl hover:bg-emerald-500/30 transition-all cursor-pointer pointer-events-auto shadow-xl backdrop-blur-md text-xs font-semibold shrink-0"
+          title={currentLang === 'ar' ? 'فتح لوحة القيادة التكتيكية ALSAT' : 'Open ALSAT Fleet HUD'}
+        >
+          <Satellite className="w-4 h-4 animate-pulse" />
+          <span>{currentLang === 'ar' ? 'لوحة القيادة ALSAT' : 'ALSAT Fleet HUD'}</span>
+        </button>
+
+        {/* ALSAT Orbital Pass Predictor Floating Pill */}
+        <AlsatPassPredictor
+          variant="floating"
+          currentLang={currentLang}
+          onOpenFullHUD={() => setShowAlsatHUD(true)}
+          onSelectPassCoordinates={(lat, lng) => {
+            const pt = geoToSvg(lat, lng);
+            setZoom(2.4);
+            setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+          }}
+        />
+      </div>
 
       {/* Floating Ground vs Satellite Distinction Legend Bar (Bottom-Center/Right) */}
       <div className="absolute bottom-6 right-4 z-20 hidden md:flex items-center gap-3 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded-xl px-3 py-2 text-[11px] text-slate-300 shadow-xl">
@@ -5826,6 +6164,43 @@ export const GISMap: React.FC<GISMapProps> = ({
         />
       )}
 
+      {/* Dynamic Cellular Automata Wildfire Propagation Tactical HUD */}
+      {layers.wildfirePropagation && showPropagationHUD && wildfirePropagationResult && (
+        <WildfirePropagationHUD
+          currentLang={currentLang}
+          simulationResult={wildfirePropagationResult}
+          currentMinute={propagationMinute}
+          onMinuteChange={setPropagationMinute}
+          isPlaying={isPropagationPlaying}
+          onTogglePlay={() => setIsPropagationPlaying(!isPropagationPlaying)}
+          playbackSpeed={propagationSpeed}
+          onSpeedChange={setPropagationSpeed}
+          params={propagationParams}
+          onParamsChange={(newParams) => {
+            setPropagationParams((prev) => ({ ...prev, ...newParams }));
+          }}
+          onClose={() => setShowPropagationHUD(false)}
+          onFocusOrigin={(lat, lng) => {
+            const pt = geoToSvg(lat, lng);
+            setZoom(2.4);
+            setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+          }}
+        />
+      )}
+
+      {/* Tactical Offline Mesh & Friendly Force Tracking (P2P FFT) HUD */}
+      {layers.tacticalMesh && showMeshHUD && (
+        <TacticalMeshPanel
+          currentLang={currentLang}
+          onClose={() => setShowMeshHUD(false)}
+          onFocusUnit={(coords) => {
+            const pt = geoToSvg(coords.lat, coords.lng);
+            setZoom(2.4);
+            setPan({ x: 500 - pt.x * 2.4, y: 325 - pt.y * 2.4 });
+          }}
+        />
+      )}
+
       {/* Automated Resource Deployment Advisor Tactical HUD */}
       {showAdvisorHUD && (
         <ResourceDeploymentAdvisorHUD
@@ -5913,6 +6288,7 @@ export const GISMap: React.FC<GISMapProps> = ({
       {showAlsatHUD && (
         <AlSatControlModal
           isOpen={showAlsatHUD}
+          initialTab={alsatInitialTab}
           positions={alsatPositions}
           passes={alsatPasses}
           selectedSatellite={selectedAlsatSatellite}

@@ -17,8 +17,20 @@ import {
   Eye,
   CheckCircle2,
   Calendar,
-  CloudSun
+  CloudSun,
+  Clock,
+  Split,
+  FileDown,
+  Loader2,
+  FileCheck,
+  Globe,
+  Flame,
+  ShieldAlert
 } from 'lucide-react';
+import { AlsatPassPredictor } from './AlsatPassPredictor';
+import { NdviSplitSlider } from './NdviSplitSlider';
+import { Alsat3DGlobe } from './Alsat3DGlobe';
+import { AlsatEarlyWarningPanel } from './AlsatEarlyWarningPanel';
 import { 
   AlsatSatelliteId, 
   AlsatRealtimePosition, 
@@ -30,8 +42,11 @@ import {
   computeAlsatPositionAtTime, 
   DEFAULT_ALSAT_PASSES 
 } from '../../services/alsatTrackingService';
+import { generateTacticalAlsatDossierPDF } from '../../services/PdfDossierExporter';
 
 export interface AlsatFleetHUDProps {
+  initialTab?: 'fleet' | 'warning' | 'globe' | 'passes' | 'predictor' | 'split' | 'specifications';
+  onSimulatePropagation?: (massif: any) => void;
   positions?: Record<AlsatSatelliteId, AlsatRealtimePosition> | null;
   passes?: AlsatNdviPassData[] | null;
   selectedSatelliteId?: AlsatSatelliteId | 'ALL';
@@ -59,6 +74,8 @@ export interface AlsatFleetHUDProps {
 }
 
 export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
+  initialTab,
+  onSimulatePropagation,
   positions,
   passes,
   selectedSatelliteId: satIdProp,
@@ -85,7 +102,7 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
   isOnline = true
 }) => {
   const isAr = currentLang === 'ar';
-  const [activeTab, setActiveTab] = useState<'fleet' | 'passes' | 'specifications'>('fleet');
+  const [activeTab, setActiveTab] = useState<'fleet' | 'warning' | 'globe' | 'passes' | 'predictor' | 'split' | 'specifications'>(initialTab || 'fleet');
   const satellites: AlsatSatelliteId[] = ['ALSAT-1B', 'ALSAT-2A', 'ALSAT-2B'];
 
   // Guarantee valid position telemetry even if feed is undefined or empty
@@ -125,6 +142,33 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
   const effectiveToggleFootprints = onToggleNdviFootprints ?? onToggleFootprints ?? (() => {});
 
   const currentSelectedPass = passProp ?? (selectedPassId ? safePasses.find(p => p.id === selectedPassId) || null : null);
+
+  // Tactical PDF Dossier Export State
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [pdfSuccessToast, setPdfSuccessToast] = useState<string | null>(null);
+
+  const handleExportTacticalDossier = async (specificPass?: AlsatNdviPassData | null) => {
+    setIsExportingPdf(true);
+    try {
+      const targetPass = specificPass || currentSelectedPass || safePasses[0] || null;
+      const targetSatId = (targetPass?.satelliteId || (activeSatelliteId !== 'ALL' ? activeSatelliteId : 'ALSAT-2A')) as AlsatSatelliteId;
+      const targetPos = safePositions[targetSatId] || null;
+
+      await generateTacticalAlsatDossierPDF({
+        satelliteId: targetSatId,
+        pass: targetPass,
+        currentPosition: targetPos,
+        lang: currentLang
+      });
+
+      setPdfSuccessToast(isAr ? 'تم توليد وتنزيل التقرير الميداني التكتيكي (PDF) بنجاح' : 'Tactical PDF Dossier generated & downloaded');
+      setTimeout(() => setPdfSuccessToast(null), 4000);
+    } catch (err) {
+      console.error('[AlsatFleetHUD] PDF Export failed:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   // Tactical keyboard shortcut: Dismiss ALSAT HUD on Escape key
   useEffect(() => {
@@ -169,6 +213,30 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Quick PDF Dossier Export Button */}
+          <button
+            id="btn-export-alsat-pdf"
+            onClick={() => handleExportTacticalDossier()}
+            disabled={isExportingPdf}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl bg-emerald-950/70 hover:bg-emerald-900/90 text-emerald-300 hover:text-emerald-100 border border-emerald-500/40 hover:border-emerald-400/80 transition-all shadow-md cursor-pointer disabled:opacity-50"
+            title={isAr ? 'تصدير التقرير الميداني التكتيكي الرسمي (PDF)' : 'Export Official Tactical Dossier (PDF)'}
+          >
+            {isExportingPdf ? (
+              <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin text-emerald-400" />
+            ) : pdfSuccessToast ? (
+              <FileCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            ) : (
+              <FileDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            )}
+            <span className="text-[10px] sm:text-xs font-bold font-mono">
+              {isExportingPdf
+                ? (isAr ? 'توليد...' : 'Exporting...')
+                : pdfSuccessToast
+                ? (isAr ? 'تم التصدير' : 'Exported')
+                : (isAr ? 'تصدير PDF' : 'Export PDF')}
+            </span>
+          </button>
+
           <button
             onClick={onRefreshTelemetry}
             className="p-1.5 sm:p-2 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-emerald-300 border border-transparent hover:border-slate-700 transition cursor-pointer"
@@ -191,15 +259,47 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
         </div>
       </div>
 
+      {/* Toast Notification Banner */}
+      {pdfSuccessToast && (
+        <div className="shrink-0 px-4 py-2 bg-emerald-950/90 border-b border-emerald-500/50 text-emerald-300 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-mono text-[11px] sm:text-xs">{pdfSuccessToast}</span>
+          </div>
+          <span className="text-[9px] font-mono text-emerald-300 px-2 py-0.5 rounded bg-emerald-900/80 border border-emerald-500/40">
+            A4 DOSSIER • ASAL
+          </span>
+        </div>
+      )}
+
       {/* Tabs */}
-      <div className="shrink-0 flex border-b border-slate-800 bg-slate-950/60 text-xs">
+      <div className="shrink-0 flex border-b border-slate-800 bg-slate-950/60 text-xs overflow-x-auto">
         <button
           onClick={() => setActiveTab('fleet')}
-          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer ${
+          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer min-w-[70px] ${
             activeTab === 'fleet' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-500/10' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
           {isAr ? 'الموقع اللحظي' : 'Real-Time'}
+        </button>
+        <button
+          onClick={() => setActiveTab('warning')}
+          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer flex items-center justify-center gap-1 min-w-[85px] ${
+            activeTab === 'warning' ? 'text-rose-400 border-b-2 border-rose-500 bg-rose-500/10' : 'text-slate-400 hover:text-rose-300'
+          }`}
+        >
+          <Flame className="w-3.5 h-3.5 text-rose-400" />
+          <span>{isAr ? 'الإنذار المبكر (FWI)' : 'Early Warning'}</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping hidden sm:inline" />
+        </button>
+        <button
+          onClick={() => setActiveTab('globe')}
+          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer flex items-center justify-center gap-1 min-w-[75px] ${
+            activeTab === 'globe' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5" />
+          <span>{isAr ? 'المحاكاة ثلاثية الأبعاد' : '3D Globe'}</span>
         </button>
         <button
           onClick={() => setActiveTab('passes')}
@@ -208,6 +308,24 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
           }`}
         >
           {isAr ? 'تغطيات NDVI' : 'NDVI Passes'}
+        </button>
+        <button
+          onClick={() => setActiveTab('predictor')}
+          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer flex items-center justify-center gap-1 ${
+            activeTab === 'predictor' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          <span>{isAr ? 'التنبؤ بالمرور' : 'Pass Predictor'}</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('split')}
+          className={`flex-1 py-2 font-semibold text-center transition cursor-pointer flex items-center justify-center gap-1 ${
+            activeTab === 'split' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Split className="w-3.5 h-3.5" />
+          <span>{isAr ? 'المقارنة الزمنية (NDVI Split)' : 'NDVI Split'}</span>
         </button>
         <button
           onClick={() => setActiveTab('specifications')}
@@ -327,9 +445,59 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
           </div>
         )}
 
+        {/* TAB: ACTIVE HAZARDS & EARLY WARNING FWI ENGINE */}
+        {activeTab === 'warning' && (
+          <AlsatEarlyWarningPanel
+            currentLang={currentLang}
+            onSelectSatellite={onSelectSatellite}
+          />
+        )}
+
+        {/* TAB: 3D WEBGL GLOBE SIMULATION */}
+        {activeTab === 'globe' && (
+          <div className="space-y-3">
+            <Alsat3DGlobe 
+              currentLang={currentLang}
+              selectedSatelliteId={activeSatelliteId}
+              onSelectSatellite={onSelectSatellite}
+            />
+          </div>
+        )}
+
         {/* TAB 2: NDVI PASSES OVER ALGERIAN FORESTS */}
         {activeTab === 'passes' && (
           <div className="space-y-3">
+            {/* Quick Export Banner for Selected or Latest Pass */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/60 to-slate-900 border border-emerald-500/30 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
+                  <FileDown className="w-4 h-4" />
+                </div>
+                <div className="truncate">
+                  <div className="text-xs font-bold text-white truncate">
+                    {currentSelectedPass 
+                      ? (isAr ? `تصدير تقرير: ${currentSelectedPass.satelliteId} (${currentSelectedPass.wilayaTargetAr})` : `Export Dossier: ${currentSelectedPass.satelliteId}`)
+                      : (isAr ? 'التقرير الميداني الشامل لمؤشر NDVI (Mila / Nord)' : 'Full Tactical NDVI Field Dossier')}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    {isAr ? 'وثيقة رسمية بصيغة PDF موجهة للحماية المدنية وإدارة الغابات' : 'Sovereign A4 PDF for DGPC & Forestry High Command'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => handleExportTacticalDossier(currentSelectedPass)}
+                disabled={isExportingPdf}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] font-mono shadow transition cursor-pointer disabled:opacity-50"
+              >
+                {isExportingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="w-3.5 h-3.5" />
+                )}
+                <span>{isAr ? 'تصدير التقرير' : 'Export Dossier'}</span>
+              </button>
+            </div>
+
             <div className="text-[11px] text-slate-400 flex items-center justify-between">
               <span>{isAr ? 'التغطيات الفضائية المتاحة في IndexedDB' : 'Cached ALSAT NDVI Passes in IDB'}:</span>
               <span className="text-emerald-400 font-mono font-bold">{safePasses.length} {isAr ? 'تغطية' : 'passes'}</span>
@@ -371,6 +539,21 @@ export const AlsatFleetHUD: React.FC<AlsatFleetHUDProps> = ({
               })}
             </div>
           </div>
+        )}
+
+        {/* TAB: ORBITAL PASS PREDICTOR */}
+        {activeTab === 'predictor' && (
+          <AlsatPassPredictor 
+            variant="panel" 
+            currentLang={currentLang} 
+          />
+        )}
+
+        {/* TAB 4: TIME-SERIES NDVI SPLIT COMPARISON */}
+        {activeTab === 'split' && (
+          <NdviSplitSlider 
+            currentLang={currentLang} 
+          />
         )}
 
         {/* TAB 3: ASAL TLE SPECIFICATIONS */}
